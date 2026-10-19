@@ -43,6 +43,15 @@ chown -R root:wheel "$TARGET"
 chmod -R 755 "$TARGET"
 echo "已还原为版本: $(defaults read "$TARGET/Contents/Info.plist" CFBundleVersion 2>/dev/null)"
 
+# 删除 FeatureFlag —— 必须做
+#   SpotlightPlus=false 是给 Dock 2419 用的（关新面板走老启动台）。
+#   原版 Dock 只会画新版面板，flag 还在就会导致「点图标毫无反应」（踩过）。
+if [ -f /Library/Preferences/FeatureFlags/Domain/SpotlightUI.plist ]; then
+    rm -f /Library/Preferences/FeatureFlags/Domain/SpotlightUI.plist && echo "FeatureFlag 已删除"
+else
+    echo "FeatureFlag 不存在，跳过"
+fi
+
 if bless --mount "$MNT" --bootefi --create-snapshot; then
     echo "快照已重建"
 else

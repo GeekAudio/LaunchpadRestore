@@ -9,14 +9,14 @@ macOS 26 原生启动台恢复工具（通用版）
 
 一、安装
 --------
-双击 LaunchpadRestore-Install.pkg → 输入密码 → 装完重启。
+双击 LaunchpadRestore-Install.pkg → 输入登录密码 → 最后一步会显示「重新启动」按钮（不是「完成」）。点按钮后重启，启动台即可使用。
 
 如果提示"无法验证开发者"（包未签名）：
   · 右键点 pkg → 打开 → 再点"打开"
   · 或终端执行：
       sudo installer -pkg ~/Documents/Macintosh/pkg/LaunchpadRestore-Install.pkg -target /
 
-装完必须重启。重启后点 Dock 最左边的图标（或按 F4）就是老启动台。
+装完必须重启。重启后点 Dock 第二个图标（或按 F4）就是老启动台。
 
 
 二、它是怎么做到跨机器安全的
@@ -34,7 +34,7 @@ macOS 26 原生启动台恢复工具（通用版）
 
 三、还原
 --------
-双击 LaunchpadRestore-Rollback.pkg → 输入密码 → 重启。
+双击 LaunchpadRestore-Rollback.pkg → 输入登录密码 → 最后一步会显示「重新启动」按钮（不是「完成」）。点按钮后恢复原版。
 
 前提是备份目录还在（/Library/Application Support/LaunchpadRestore/Dock.app.orig）。
 如果备份被删了，还原包会报"找不到原版备份"并中止，不会破坏系统。

@@ -17,7 +17,7 @@
 - 全屏图标网格，左右翻页
 - 拖拽排序、拖拽建文件夹
 - 文件夹翻页
-- 按 `F4` 或点 Dock 最左边的图标唤起
+- 按 `F4` 或点 Dock **第二个图标**唤起
 - 应用列表和你的原有布局来自系统本身
 
 ---
@@ -25,7 +25,7 @@
 ## 安装
 
 1. 下载 [`pkg/LaunchpadRestore-Install.pkg`](pkg/LaunchpadRestore-Install.pkg)
-2. 双击 → 输入登录密码 → **重启**
+2. 双击 → 输入登录密码 → 安装器最后一步点 **「重新启动」**（不会显示「完成」或「关闭」）
 
 > 包未签名。如果提示「无法验证开发者」：**右键点 pkg → 打开 → 再点「打开」**。
 >
@@ -34,13 +34,13 @@
 > sudo installer -pkg LaunchpadRestore-Install.pkg -target /
 > ```
 
-重启后点 Dock 最左边的图标（或按 `F4`）就是老启动台。
+重启后点 Dock 第二个图标（或按 `F4`）就是老启动台。
 
 ---
 
 ## 还原
 
-双击 [`pkg/LaunchpadRestore-Rollback.pkg`](pkg/LaunchpadRestore-Rollback.pkg) → 输入密码 → 重启。
+双击 [`pkg/LaunchpadRestore-Rollback.pkg`](pkg/LaunchpadRestore-Rollback.pkg) → 输入密码 → 安装器最后一步点 **「重新启动」**（不是「完成」或「关闭」）。
 
 安装时会**自动备份这台机器自己的 `Dock.app`** 到：
 
@@ -67,14 +67,17 @@
 
 ## 它具体做了什么
 
-`postinstall` 脚本（[`scripts/postinstall-install.sh`](scripts/postinstall-install.sh)）执行四步：
+`postinstall` 脚本（[`scripts/postinstall-install.sh`](scripts/postinstall-install.sh)）执行五步：
 
 1. 用 `ditto` 备份当前 `Dock.app` → `/Library/Application Support/LaunchpadRestore/`
 2. 动态定位系统卷（`disk` 编号会变，不能写死），以 `-o nobrowse` 挂到 `/System/Volumes/Update/mnt1`
 3. 替换 `mnt1/System/Library/CoreServices/Dock.app` 为 26.0 版（`2419`）
-4. `bless --mount ... --bootefi --create-snapshot` 重建系统快照
+4. 写入 `SpotlightPlus=false`，让 2419 走旧启动台界面
+5. `bless --mount ... --bootefi --create-snapshot` 重建系统快照
 
-> 第 4 步是关键：macOS 11+ 的系统卷是只读快照，**不重建快照则改动不会生效**。
+> 第 5 步是关键：macOS 11+ 的系统卷是只读快照，**不重建快照则改动不会生效**。
+>
+> 两个 pkg 都把 Installer 结尾设为 **「重新启动」**；还原包会先恢复本机备份 Dock 并移除 `SpotlightPlus` 开关，再提示重启。
 
 日志：`/var/log/launchpadrestore.log`
 

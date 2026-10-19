@@ -69,6 +69,16 @@ chown -R root:wheel "$TARGET"
 chmod -R 755 "$TARGET"
 echo "已替换为版本: $(defaults read "$TARGET/Contents/Info.plist" CFBundleVersion 2>/dev/null)"
 
+# 4.5) 写入 FeatureFlag —— 必须做
+#      SpotlightPlus=false 让系统关掉新版面板，Dock 2419 才会画老启动台。
+#      少了这一步：Dock 换成 2419 了，但点图标毫无反应（踩过）。
+mkdir -p /Library/Preferences/FeatureFlags/Domain
+if defaults write /Library/Preferences/FeatureFlags/Domain/SpotlightUI.plist SpotlightPlus -dict Enabled -bool false; then
+    echo "FeatureFlag 已写入 (SpotlightPlus=false)"
+else
+    echo "★ FeatureFlag 写入失败，启动台可能不出现"
+fi
+
 # 5) 重建系统快照（不重建则不生效）
 if bless --mount "$MNT" --bootefi --create-snapshot; then
     echo "快照已重建"
