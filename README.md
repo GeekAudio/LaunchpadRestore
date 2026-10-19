@@ -26,7 +26,7 @@
 
 ## 安装
 
-1. 从 [Releases](../../releases/latest) 下载 `安装.pkg`
+1. 从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Install.pkg`（本地名 `安装.pkg`）
 2. 双击 → 输入登录密码 → 安装器最后一步点 **「重新启动」**
 
 > 包未签名。如果提示「无法验证开发者」：**右键点 pkg → 打开 → 再点「打开」**。
@@ -42,7 +42,7 @@
 
 ## 还原
 
-从 [Releases](../../releases/latest) 下载 `还原.pkg` → 双击 → 输入密码 → 安装器最后一步点 **「重新启动」**。
+从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Rollback.pkg`（本地名 `还原.pkg`）→ 双击 → 输入密码 → 安装器最后一步点 **「重新启动」**。
 
 安装时会**自动备份这台机器自己的 `Dock.app`** 到：
 
