@@ -2,7 +2,7 @@
 
 把 macOS 26 上被砍掉的**原生启动台（Launchpad）**找回来。
 
-**[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh)
+**[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh) · [图标空白](#图标空白)
 
 > 安装包体积较大，放在 [Releases](../../releases/latest) 里，不进 git 历史。
 
@@ -95,6 +95,41 @@
 ```bash
 sudo rm -rf "/Library/Application Support/LaunchpadRestore/Dock.app.orig"
 ```
+
+---
+
+## 图标空白
+
+个别 app 在启动台里显示成**白方块**。这不是图标丢了，是启动台的图标缓存里存了一张 128×128 的白图。
+
+**判据**：正常缓存条目是 40–59 KB 的 PNG，白图条目固定 **818 字节**。查一下就知道哪些 app 中招：
+
+```bash
+DB=$(echo /var/folders/*/*/0/com.apple.dock.launchpad/db)
+sqlite3 -header -column "$DB/db" "
+  select a.item_id, a.title, length(i.image_data) as big
+  from apps a join image_cache i on i.item_id = a.item_id
+  where length(i.image_data) < 5000;"
+```
+
+> macOS 26 里启动台数据库**不在** `~/Library/Application Support/Dock/`（该目录已不存在），
+> 而在 `/var/folders/<hash>/0/com.apple.dock.launchpad/db`。hash 每台机器不同，不要写死。
+
+**修复**：
+
+```bash
+./scripts/fix-launchpad-icon.sh --scan                               # 只诊断，列出白图条目
+./scripts/fix-launchpad-icon.sh /System/Applications/VoiceMemos.app  # 修复指定 app
+```
+
+脚本做的事：按缓存的原生规格重新生成图标写回去，再重启 Dock。
+
+- 大图 **128×128 16-bit RGBA**、小图 **30×30 8-bit RGBA** —— 16-bit 这点容易漏，普通 PNG 默认是 8-bit
+- 写库前必须先 `killall Dock` 释放数据库连接，否则会被占用
+- 写入后等几秒复查长度没被覆盖回 818 才算成功
+
+**为什么会出现**：`2419` 的 Dock 渲染新格式图标（`Assets.car` 里的 `IconGroup` 变体）时可能超时失败，
+直接落一张白图。清图标缓存或系统更新后可能复发，重跑脚本即可。
 
 ---
 
