@@ -89,5 +89,29 @@ fi
 # 6) 卸载
 umount "$MNT" 2>/dev/null || umount -f "$MNT" 2>/dev/null
 
+# 7) 图标自检 agent
+#    Dock 2419 渲染图标偶发失败时会写一张 818 字节全透明 PNG，界面上表现为
+#    「图标消失」。agent 在每次登录后 20 秒扫一遍，有空图标才补，没有就静默退出。
+AGENT="/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist"
+if [ -f "$AGENT" ]; then
+    chown root:wheel "$AGENT" 2>/dev/null
+    chmod 644 "$AGENT" 2>/dev/null
+    echo "图标自检 agent 已就位（下次登录自动生效）: $AGENT"
+
+    # 用户之前若手动跑过 --install-agent，会有份用户级副本，清掉避免跑两份
+    CU="$(stat -f%Su /dev/console 2>/dev/null)"
+    if [ -n "$CU" ] && [ "$CU" != "root" ]; then
+        CH="$(dscl . -read "/Users/$CU" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+        UID_N="$(id -u "$CU" 2>/dev/null)"
+        if [ -n "$CH" ] && [ -f "$CH/Library/LaunchAgents/com.geek.launchpadiconfix.plist" ]; then
+            launchctl asuser "$UID_N" launchctl bootout "gui/$UID_N/com.geek.launchpadiconfix" 2>/dev/null
+            rm -f "$CH/Library/LaunchAgents/com.geek.launchpadiconfix.plist"
+            echo "已移除用户级重复 agent（避免跑两份）"
+        fi
+    fi
+else
+    echo "★ 图标自检 agent 缺失（不影响启动台，只是空图标需要手动修）"
+fi
+
 echo "===== 安装完成，重启后生效 ====="
 exit 0

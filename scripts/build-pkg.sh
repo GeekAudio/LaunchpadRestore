@@ -32,12 +32,38 @@ cp "$HERE/postinstall-install.sh"  "$BUILD/scripts-install/postinstall"
 cp "$HERE/postinstall-rollback.sh" "$BUILD/scripts-rollback/postinstall"
 chmod +x "$BUILD/scripts-install/postinstall" "$BUILD/scripts-rollback/postinstall"
 
-# --- 2. payload：只放数据卷里的占位文件 ---
+# --- 2. payload：数据卷里的占位文件 + 图标自检 agent ---
 # 注意：payload 绝对不能写系统宗卷，否则 Installer 会报
 #       "软件包正尝试将内容安装到系统宗卷" 并中止，postinstall 不会执行。
 mkdir -p "$BUILD/payload/Library/Application Support/LaunchpadRestore"
 printf 'LaunchpadRestore 备份目录，请勿删除。\n' \
     > "$BUILD/payload/Library/Application Support/LaunchpadRestore/README.txt"
+
+# 2.1) 图标自检脚本（2419 会偶发渲染失败，落 818 字节全透明图 ⇒ 图标消失）
+cp "$HERE/fix-launchpad-icon.sh" \
+   "$BUILD/payload/Library/Application Support/LaunchpadRestore/fix-launchpad-icon.sh"
+chmod 755 "$BUILD/payload/Library/Application Support/LaunchpadRestore/fix-launchpad-icon.sh"
+
+# 2.2) 登录自检：装在 /Library/LaunchAgents（对所有用户生效，下次登录自动加载）
+mkdir -p "$BUILD/payload/Library/LaunchAgents"
+cat > "$BUILD/payload/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.geekaudio.launchpadiconfix</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Library/Application Support/LaunchpadRestore/fix-launchpad-icon.sh</string>
+        <string>--agent</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>StandardOutPath</key><string>/tmp/launchpadiconfix.log</string>
+    <key>StandardErrorPath</key><string>/tmp/launchpadiconfix.log</string>
+</dict>
+</plist>
+PLIST
 
 mkdir -p "$ROOT/pkg"
 

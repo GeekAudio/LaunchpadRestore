@@ -69,17 +69,20 @@
 
 ## 它具体做了什么
 
-`postinstall` 脚本（[`scripts/postinstall-install.sh`](scripts/postinstall-install.sh)）执行五步：
+`postinstall` 脚本（[`scripts/postinstall-install.sh`](scripts/postinstall-install.sh)）执行六步：
 
 1. 用 `ditto` 备份当前 `Dock.app` → `/Library/Application Support/LaunchpadRestore/`
 2. 动态定位系统卷（`disk` 编号会变，不能写死），以 `-o nobrowse` 挂到 `/System/Volumes/Update/mnt1`
 3. 替换 `mnt1/System/Library/CoreServices/Dock.app` 为 26.0 版（`2419`）
 4. 写入 `SpotlightPlus=false`，让 2419 走旧启动台界面
 5. `bless --mount ... --bootefi --create-snapshot` 重建系统快照
+6. 装一个登录自检 `agent`（`/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist`），
+   每次登录后自动把「变空的图标」补回来 —— 见 [图标空白](#图标空白)
 
 > 第 5 步是关键：macOS 11+ 的系统卷是只读快照，**不重建快照则改动不会生效**。
 >
-> 两个 pkg 都把 Installer 结尾设为 **「重新启动」**；还原包会先恢复本机备份 Dock 并移除 `SpotlightPlus` 开关，再提示重启。
+> 两个 pkg 都把 Installer 结尾设为 **「重新启动」**；还原包会先恢复本机备份 Dock、
+> 移除 `SpotlightPlus` 开关和图标自检 agent，再提示重启。
 
 日志：`/var/log/launchpadrestore.log`
 
@@ -158,19 +161,24 @@ Dock 持有连接也能并发写，不需要停它。
 
 ### 想不复发：装登录自检
 
+**用安装包装的，这一步已经自动做了**——安装包会把 agent 装到
+`/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist`，重启后第一次登录就生效。
+
+手动装（脚本方式，装到当前用户）：
+
 ```bash
 ./scripts/fix-launchpad-icon.sh --install-agent     # 装
 ./scripts/fix-launchpad-icon.sh --uninstall-agent   # 卸
 ```
 
-装一个 `~/Library/LaunchAgents/com.geek.launchpadiconfix.plist`，每次登录后 20 秒自动跑
-`--fix-all`：扫到空图标才动手，没有就静默退出（不重启 Dock、不闪屏）。
-日志 `~/Library/Logs/LaunchpadIconFix.log`。
+每次登录后 20 秒自动跑 `--fix-all`：扫到空图标才动手，没有就静默退出
+（不重启 Dock、不闪屏）。日志 `~/Library/Logs/LaunchpadIconFix.log`
+（安装包装的写 `/tmp/launchpadiconfix.log`）。
 
-> 装完**下次登录**才加载。想马上启用：
+> 手动装的**下次登录**才加载。想马上启用：
 > `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.geek.launchpadiconfix.plist`
-
-这是目前最接近「永久一次修复」的方案：不用再手动跑，登录时自己把空图标补回来。
+>
+> 两种别同时装，会跑两份；安装包的 postinstall 会自动清掉用户级那份。
 
 ### 从源头降低复发率（仅限自己的 App）
 

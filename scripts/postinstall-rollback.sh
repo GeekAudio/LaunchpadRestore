@@ -60,5 +60,18 @@ fi
 
 umount "$MNT" 2>/dev/null || umount -f "$MNT" 2>/dev/null
 
+# 移除图标自检 agent —— 它是给 Dock 2419 用的，原版 Dock 不需要
+AGENT="/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist"
+if [ -f "$AGENT" ]; then
+    CU="$(stat -f%Su /dev/console 2>/dev/null)"
+    if [ -n "$CU" ] && [ "$CU" != "root" ]; then
+        UID_N="$(id -u "$CU" 2>/dev/null)"
+        launchctl asuser "$UID_N" launchctl bootout "gui/$UID_N/com.geekaudio.launchpadiconfix" 2>/dev/null
+    fi
+    rm -f "$AGENT"
+    echo "图标自检 agent 已移除"
+fi
+rm -f "$BACKUP_DIR/fix-launchpad-icon.sh"
+
 echo "===== 还原完成，重启后生效 ====="
 exit 0
