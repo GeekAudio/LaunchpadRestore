@@ -18,6 +18,32 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') 安装开始 ====="
 
 fail() { echo "失败: $*"; echo "===== 中止 ====="; exit 0; }
 
+# 图标自检 agent —— 布置 + 清理用户级重复副本
+# Dock 2419 渲染图标偶发失败时会写一张 818 字节全透明 PNG，界面上表现为
+# 「图标消失」。agent 每次登录后 20 秒扫一遍，有空图标才补，没有就静默退出。
+setup_agent() {
+    AGENT="/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist"
+    if [ ! -f "$AGENT" ]; then
+        echo "★ 图标自检 agent 缺失（不影响启动台，只是空图标需要手动修）"
+        return 0
+    fi
+    chown root:wheel "$AGENT" 2>/dev/null
+    chmod 644 "$AGENT" 2>/dev/null
+    echo "图标自检 agent 已就位（下次登录自动生效）: $AGENT"
+
+    # 用户之前若手动跑过 --install-agent，会有份用户级副本，清掉避免跑两份
+    CU="$(stat -f%Su /dev/console 2>/dev/null)"
+    if [ -n "$CU" ] && [ "$CU" != "root" ]; then
+        CH="$(dscl . -read "/Users/$CU" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+        UID_N="$(id -u "$CU" 2>/dev/null)"
+        if [ -n "$CH" ] && [ -f "$CH/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist" ]; then
+            launchctl asuser "$UID_N" launchctl bootout "gui/$UID_N/com.geekaudio.launchpadiconfix" 2>/dev/null
+            rm -f "$CH/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist"
+            echo "已移除用户级重复 agent（避免跑两份）"
+        fi
+    fi
+}
+
 [ -d "$NEW_DOCK" ] || fail "payload 缺失: $NEW_DOCK"
 
 CUR_VER="$(defaults read "$CUR_DOCK/Contents/Info.plist" CFBundleVersion 2>/dev/null)"
@@ -25,9 +51,12 @@ TGT_VER="$(defaults read "$NEW_DOCK/Contents/Info.plist" CFBundleVersion 2>/dev/
 echo "当前 Dock: ${CUR_VER:-未知}  目标 Dock: ${TGT_VER:-未知}"
 echo "系统: $(sw_vers -productVersion) ($(uname -m))"
 
-# 已经是目标版本 -> 什么都不做（幂等）
+# 已经是目标版本 -> 只补 agent，其余跳过（幂等）
+# ★ 必须在这里也调 setup_agent：已经装过 2419 的机器重装 pkg 会走到这个分支，
+#   不补的话 agent 永远装不上（payload 里的文件 Installer 已经放好了，但用户级副本清理和日志会缺）
 if [ -n "$CUR_VER" ] && [ "$CUR_VER" = "$TGT_VER" ]; then
     echo "当前已是目标版本，无需替换"
+    setup_agent
     echo "===== 跳过 ====="
     exit 0
 fi
@@ -90,28 +119,7 @@ fi
 umount "$MNT" 2>/dev/null || umount -f "$MNT" 2>/dev/null
 
 # 7) 图标自检 agent
-#    Dock 2419 渲染图标偶发失败时会写一张 818 字节全透明 PNG，界面上表现为
-#    「图标消失」。agent 在每次登录后 20 秒扫一遍，有空图标才补，没有就静默退出。
-AGENT="/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist"
-if [ -f "$AGENT" ]; then
-    chown root:wheel "$AGENT" 2>/dev/null
-    chmod 644 "$AGENT" 2>/dev/null
-    echo "图标自检 agent 已就位（下次登录自动生效）: $AGENT"
-
-    # 用户之前若手动跑过 --install-agent，会有份用户级副本，清掉避免跑两份
-    CU="$(stat -f%Su /dev/console 2>/dev/null)"
-    if [ -n "$CU" ] && [ "$CU" != "root" ]; then
-        CH="$(dscl . -read "/Users/$CU" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
-        UID_N="$(id -u "$CU" 2>/dev/null)"
-        if [ -n "$CH" ] && [ -f "$CH/Library/LaunchAgents/com.geek.launchpadiconfix.plist" ]; then
-            launchctl asuser "$UID_N" launchctl bootout "gui/$UID_N/com.geek.launchpadiconfix" 2>/dev/null
-            rm -f "$CH/Library/LaunchAgents/com.geek.launchpadiconfix.plist"
-            echo "已移除用户级重复 agent（避免跑两份）"
-        fi
-    fi
-else
-    echo "★ 图标自检 agent 缺失（不影响启动台，只是空图标需要手动修）"
-fi
+setup_agent
 
 echo "===== 安装完成，重启后生效 ====="
 exit 0
