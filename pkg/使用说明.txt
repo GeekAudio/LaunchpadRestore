@@ -1,0 +1,77 @@
+macOS 26 原生启动台恢复工具（通用版）
+========================================
+
+两个 pkg，可拿到任意 macOS 26.x 的 Mac 上安装（Intel / Apple Silicon 都支持）。
+
+  LaunchpadRestore-Install.pkg    安装：把 Dock.app 换成 26.0 版，启动台回来
+  LaunchpadRestore-Rollback.pkg   还原：换回这台机器自己的原版 Dock
+
+
+一、安装
+--------
+双击 LaunchpadRestore-Install.pkg → 输入密码 → 装完重启。
+
+如果提示"无法验证开发者"（包未签名）：
+  · 右键点 pkg → 打开 → 再点"打开"
+  · 或终端执行：
+      sudo installer -pkg ~/Documents/Macintosh/pkg/LaunchpadRestore-Install.pkg -target /
+
+装完必须重启。重启后点 Dock 最左边的图标（或按 F4）就是老启动台。
+
+
+二、它是怎么做到跨机器安全的
+----------------------------
+安装时【自动备份这台机器当前的 Dock】，备份到：
+  /Library/Application Support/LaunchpadRestore/Dock.app.orig
+
+所以：
+  · 每台机器备份的都是自己的原版，不会串版本
+  · 还原包读的也是这台机器自己的备份
+  · 如果已经装过（当前 Dock 已是目标版本），安装包会自动跳过，重复双击无害
+
+日志：/var/log/launchpadrestore.log
+
+
+三、还原
+--------
+双击 LaunchpadRestore-Rollback.pkg → 输入密码 → 重启。
+
+前提是备份目录还在（/Library/Application Support/LaunchpadRestore/Dock.app.orig）。
+如果备份被删了，还原包会报"找不到原版备份"并中止，不会破坏系统。
+
+
+四、系统更新后
+--------------
+每次 macOS 更新都会把 Dock.app 换回新版，启动台会消失。
+更新完重新双击 LaunchpadRestore-Install.pkg 即可。
+
+注意：更新后备份目录里可能还是更新前的旧版本。如果版本跨得大（比如 26.x → 27.x），
+建议先删掉旧备份，让安装包重新备份：
+  sudo rm -rf "/Library/Application Support/LaunchpadRestore/Dock.app.orig"
+然后再双击安装包。
+
+
+五、出问题怎么办
+----------------
+如果重启后 Dock 崩溃、黑屏、没有桌面：
+
+  1. 长按电源键关机，开机按住 Cmd+R 进恢复模式
+  2. 菜单栏「实用工具」→「终端」
+  3. 把备份换回去（卷名换成你的系统盘名）：
+       cp -R "/Volumes/Macintosh HD/Library/Application Support/LaunchpadRestore/Dock.app.orig" \
+             "/Volumes/Macintosh HD/System/Library/CoreServices/Dock.app"
+  4. 重启
+
+
+六、兼容性
+----------
+  · 系统：macOS 26.0 – 26.7（含 26.7.1 实测通过）
+  · CPU：Intel x86_64 / Apple Silicon arm64e（Dock.app 是通用二进制）
+  · 前提：csrutil authenticated-root 为 disabled（黑苹果/OCLP 环境通常已满足）
+  · 不需要：关闭 SIP、替换 Spotlight、替换 Apps、降级系统
+
+原理：macOS 26.0 的 Dock.app（版本 2419）里保留了完整的老启动台界面代码，
+26.7.1 的 Dock（2427.6）把它删了。只换 Dock.app 就能让启动台回来。
+
+已知取舍：Dock 2419 比 26.7.1 落后 7 个小版本，缺少 26.1–26.7 的 Dock 修复。
+目前实测未发现异常。
