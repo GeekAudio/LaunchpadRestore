@@ -1,13 +1,13 @@
 #!/bin/bash
-# 修复 Launchpad 图标空白 —— image_cache 里存了 818 字节白图时重注入正确图标
+# 修复 Launchpad 图标变空 —— image_cache 里存了 818 字节全透明空图时重注入正确图标
 #
 # 背景：老版 Dock(2419) 对新格式图标（Assets.car 的 IconGroup）首次渲染可能失败，
 #       往 ~/.../com.apple.dock.launchpad/db 的 image_cache 写一张 128x128 纯白 PNG(818B)。
 #       图标资源本身没坏，只是缓存脏了。
 #
 # 用法：./fix-launchpad-icon.sh <App.app> [更多 App.app ...]
-#       ./fix-launchpad-icon.sh --scan           # 只列出所有白图条目，不修改
-#       ./fix-launchpad-icon.sh --fix-all        # 自动扫出全部白图条目并逐个修复
+#       ./fix-launchpad-icon.sh --scan           # 只列出所有空图条目，不修改
+#       ./fix-launchpad-icon.sh --fix-all        # 自动扫出全部空图条目并逐个修复
 #       ./fix-launchpad-icon.sh --install-agent  # 装登录自检（每次登录自动跑 --fix-all）
 #       ./fix-launchpad-icon.sh --uninstall-agent
 #
@@ -67,7 +67,7 @@ PLIST
     echo "✓ 已安装登录自检：$AGENT_PLIST"
     echo "  脚本副本：$AGENT_DIR/fix-launchpad-icon.sh"
     echo "  日志：~/Library/Logs/LaunchpadIconFix.log"
-    echo "  没有白图时不会重启 Dock，不会闪屏。"
+    echo "  没有空图时不会重启 Dock，不会闪屏。"
     exit 0 ;;
   --uninstall-agent)
     launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
@@ -83,7 +83,7 @@ esac
 # ---------- --scan：只诊断 ----------
 if [ "$1" = "--scan" ]; then
   echo
-  echo "=== 疑似白图条目（正常 40–59 KB，异常 818 字节）==="
+  echo "=== 疑似空图条目（正常 12–60 KB，异常 818 字节）==="
   /usr/bin/sqlite3 -header -column "$DB/db" "
     select a.item_id, a.title, length(i.image_data) as big
     from apps a join image_cache i on i.item_id = a.item_id
@@ -97,15 +97,15 @@ if [ "$1" = "--scan" ]; then
   exit 0
 fi
 
-# ---------- --fix-all：扫出全部白图条目，反查路径后走正常流程 ----------
+# ---------- --fix-all：扫出全部空图条目，反查路径后走正常流程 ----------
 if [ "$1" = "--fix-all" ]; then
   echo
-  echo "=== 扫描白图条目 ==="
+  echo "=== 扫描空图条目 ==="
   IDS=$(/usr/bin/sqlite3 "$DB/db" "
     select a.bundleid from apps a join image_cache i on i.item_id = a.item_id
     where length(i.image_data) < 5000;")
   if [ -z "$IDS" ]; then
-    echo "没有白图条目，无需修复。"
+    echo "没有空图条目，无需修复。"
     exit 0
   fi
 
@@ -223,7 +223,7 @@ echo
 echo "等 Dock 起来重新渲染…"
 sleep 10
 
-echo "=== 复查：仍为白图的条目 ==="
+echo "=== 复查：仍为空的条目 ==="
 REMAIN=$(/usr/bin/sqlite3 -header -column "$DB/db" "
   select a.title, length(i.image_data) as big
   from apps a join image_cache i on i.item_id = a.item_id

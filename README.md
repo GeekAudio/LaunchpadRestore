@@ -2,7 +2,7 @@
 
 把 macOS 26 上被砍掉的**原生启动台（Launchpad）**找回来。
 
-**[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh) · [图标空白](#图标空白) · [布局恢复默认](#布局乱了--恢复默认顺序)
+**[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
 
 > 安装包体积较大，放在 [Releases](../../releases/latest) 里，不进 git 历史。
 
@@ -26,26 +26,26 @@
 
 ## 安装
 
-1. 从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Install.pkg`（本地名 `安装.pkg`）
+1. 从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Install.pkg`
 2. 双击 → 输入登录密码 → 安装器最后一步点 **「重新启动」**
 
 > 包未签名。如果提示「无法验证开发者」：**右键点 pkg → 打开 → 再点「打开」**。
 >
 > 或者用命令行：
 > ```bash
-> sudo installer -pkg 安装.pkg -target /
+> sudo installer -pkg LaunchpadRestore-Install.pkg -target /
 > ```
 
 重启后点 Dock 第二个图标（或按 `F4`）就是老启动台。
 
 > 安装包还会顺带装一个**图标自检**：Dock 2419 偶尔会把某个图标渲染成空图，
-> 自检会在每次登录后自动补回来，不用你操心。详见 [图标空白](#图标空白)。
+> 自检会在每次登录后自动补回来，不用你操心。详见 [图标变空](#图标变空)。
 
 ---
 
 ## 还原
 
-从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Rollback.pkg`（本地名 `还原.pkg`）→ 双击 → 输入密码 → 安装器最后一步点 **「重新启动」**。
+从 [Releases](../../releases/latest) 下载 `LaunchpadRestore-Rollback.pkg` → 双击 → 输入密码 → 安装器最后一步点 **「重新启动」**。
 
 安装时会**自动备份这台机器自己的 `Dock.app`** 到：
 
@@ -66,7 +66,7 @@
 | 前提 | `csrutil authenticated-root` 为 `disabled`（黑苹果 / OCLP 环境通常已满足） |
 | 不需要 | 关闭 SIP、替换 Spotlight、替换 Apps、降级系统 |
 
-**已经是目标版本时安装包会自动跳过**，重复双击无害。
+**已经是目标版本时安装包会自动跳过替换**，但**仍会补装图标自检**，重复双击无害。
 
 ---
 
@@ -80,7 +80,7 @@
 4. 写入 `SpotlightPlus=false`，让 2419 走旧启动台界面
 5. `bless --mount ... --bootefi --create-snapshot` 重建系统快照
 6. 装一个登录自检 `agent`（`/Library/LaunchAgents/com.geekaudio.launchpadiconfix.plist`），
-   每次登录后自动把「变空的图标」补回来 —— 见 [图标空白](#图标空白)
+   每次登录后自动把「变空的图标」补回来 —— 见 [图标变空](#图标变空)
 
 > 第 5 步是关键：macOS 11+ 的系统卷是只读快照，**不重建快照则改动不会生效**。
 >
@@ -104,11 +104,12 @@ sudo rm -rf "/Library/Application Support/LaunchpadRestore/Dock.app.orig"
 
 ---
 
-## 图标空白
+## 图标变空
 
-个别 app 在启动台里显示成**白方块**。这不是图标丢了，是启动台的图标缓存里存了一张 128×128 的白图。
+个别 app 的图标在启动台里**整个不见了**（不是白方块，是彻底看不见）。App 没丢，是启动台的图标缓存里
+存了一张 **128×128 全透明 PNG**。
 
-**判据**：正常缓存条目是 40–59 KB 的 PNG，白图条目固定 **818 字节**。查一下就知道哪些 app 中招：
+**判据**：正常缓存条目是 12–60 KB 的 PNG，空图条目固定 **818 字节**。查一下就知道哪些 app 中招：
 
 ```bash
 DB=$(echo /var/folders/*/*/0/com.apple.dock.launchpad/db)
@@ -124,15 +125,15 @@ sqlite3 -header -column "$DB/db" "
 **修复**：
 
 ```bash
-./scripts/fix-launchpad-icon.sh --scan                     # 只诊断，列出白图条目
-./scripts/fix-launchpad-icon.sh --fix-all                  # 自动扫出全部白图并逐个修复
+./scripts/fix-launchpad-icon.sh --scan                     # 只诊断，列出空图条目
+./scripts/fix-launchpad-icon.sh --fix-all                  # 自动扫出全部空图并逐个修复
 ./scripts/fix-launchpad-icon.sh /Applications/1401.app     # 修指定 app
 ```
 
-脚本做的事：按缓存的原生规格重新生成图标写回去，再重启 Dock。
+脚本做的事：按缓存的原生规格重新生成图标写回去，再重启 Dock 刷新界面。
 
 - 大图 **128×128 16-bit RGBA**、小图 **30×30 8-bit RGBA** —— 16-bit 这点容易漏，普通 PNG 默认是 8-bit
-- 写库前必须先 `killall Dock` 释放数据库连接，否则会被占用
+- 写库顺序见下一节，**别先杀 Dock**
 
 ### 为什么会空 / 能不能一次修好
 
