@@ -6,13 +6,15 @@
 #       图标资源本身没坏，只是缓存脏了。
 #
 # 用法：./fix-launchpad-icon.sh <App.app> [更多 App.app ...]
-#       ./fix-launchpad-icon.sh --scan          # 只列出所有白图条目，不修改
-#       ./fix-launchpad-icon.sh --fix-all       # 自动扫出全部白图条目并逐个修复
+#       ./fix-launchpad-icon.sh --scan           # 只列出所有白图条目，不修改
+#       ./fix-launchpad-icon.sh --fix-all        # 自动扫出全部白图条目并逐个修复
+#       ./fix-launchpad-icon.sh --install-agent  # 装登录自检（每次登录自动跑 --fix-all）
+#       ./fix-launchpad-icon.sh --uninstall-agent
 #
-# ⚠️ 两类白图，只有第一类能修：
-#    可修   —— 注入后 Dock 重启会重新渲染成功，缓存被换成正确图，长期有效
-#    不可修 —— Dock(2419) 渲染该图标必然失败，注入后 10 秒内被覆盖回 818 字节
-#              （实测：旁白实用工具、语音备忘录）只能接受，或换回新版 Dock
+# 成因：Dock(2419) 给启动台渲染图标时会偶发失败（多半是解码超时），失败时往
+#       image_cache 写一张 128x128 全透明 PNG（正好 818 字节）当占位。图标资源没坏，
+#       只是缓存里是空图，界面上就表现为「这个 App 图标消失了」。
+#       ★ 失败是随机的：同一台机器每次重建缓存，中招的 App 可能换一批。
 #
 set -euo pipefail
 
@@ -31,6 +33,52 @@ if [ -z "$DB" ]; then
   exit 1
 fi
 echo "数据库: $DB/db"
+
+# ---------- 登录自检 agent ----------
+AGENT_LABEL="com.geek.launchpadiconfix"
+AGENT_DIR="$HOME/Library/Application Support/LaunchpadRestore"
+AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
+
+case "${1:-}" in
+  --install-agent)
+    mkdir -p "$AGENT_DIR" "$HOME/Library/LaunchAgents"
+    cp "$0" "$AGENT_DIR/fix-launchpad-icon.sh"
+    chmod +x "$AGENT_DIR/fix-launchpad-icon.sh"
+    cat > "$AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$AGENT_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$AGENT_DIR/fix-launchpad-icon.sh</string>
+        <string>--agent</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>StandardOutPath</key><string>$HOME/Library/Logs/LaunchpadIconFix.log</string>
+    <key>StandardErrorPath</key><string>$HOME/Library/Logs/LaunchpadIconFix.log</string>
+</dict>
+</plist>
+PLIST
+    launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST" 2>/dev/null || true
+    echo "✓ 已安装登录自检：$AGENT_PLIST"
+    echo "  脚本副本：$AGENT_DIR/fix-launchpad-icon.sh"
+    echo "  日志：~/Library/Logs/LaunchpadIconFix.log"
+    echo "  没有白图时不会重启 Dock，不会闪屏。"
+    exit 0 ;;
+  --uninstall-agent)
+    launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+    rm -f "$AGENT_PLIST" "$AGENT_DIR/fix-launchpad-icon.sh"
+    echo "✓ 已卸载登录自检"
+    exit 0 ;;
+  --agent)
+    # 等 Dock 起来、图标渲染完再动手，避免撞车
+    sleep 20
+    set -- --fix-all ;;
+esac
 
 # ---------- --scan：只诊断 ----------
 if [ "$1" = "--scan" ]; then
@@ -155,13 +203,20 @@ if [ "$COUNT" -eq 0 ]; then
   exit 1
 fi
 
-# ---------- 写库（必须先停 Dock，它持有连接） ----------
+# ---------- 写库 ----------
+# ★★ 顺序铁律：必须在 Dock 运行时写库，写完再重启 Dock。
+#    反过来（先 killall Dock 再写）会撞车：新 Dock 起来时正在渲染图标，
+#    对渲染失败的条目会立刻写入 818 字节空图，把刚写进去的正确图标盖掉——
+#    表现为「注入成功但复查还是 818」，很容易误判成「这个图标修不了」。
+#    数据库是 WAL 模式，Dock 持有连接也能并发写，不需要停它。
 echo
-echo "重启 Dock 并写入 $COUNT 条缓存…"
+echo "写入 $COUNT 条缓存（Dock 保持运行）…"
+/usr/bin/sqlite3 "$DB/db" ".timeout 15000" < "$SQL"
+sleep 2
+
+echo "重启 Dock 让界面重新读缓存…"
 killall Dock 2>/dev/null || true
-sleep 1
-/usr/bin/sqlite3 "$DB/db" ".timeout 8000" < "$SQL"
-sleep 3
+sleep 10
 
 # ---------- 验证 ----------
 echo
