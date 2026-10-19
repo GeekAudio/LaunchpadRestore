@@ -4,6 +4,8 @@
 
 **[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh)
 
+> 安装包体积较大，放在 [Releases](../../releases/latest) 里，不进 git 历史。
+
 > **一句话原理**：macOS 26.0 的 `Dock.app`（版本 `2419`）里还完整保留着老启动台的界面代码，
 > 26.1 之后被苹果删掉了。**只替换 `Dock.app` 就能恢复**——不需要关闭 SIP、不需要降级系统、
 > 不需要替换 Spotlight 或 Apps。
@@ -24,14 +26,14 @@
 
 ## 安装
 
-1. 下载 [`pkg/LaunchpadRestore-Install.pkg`](pkg/LaunchpadRestore-Install.pkg)
-2. 双击 → 输入登录密码 → 安装器最后一步点 **「重新启动」**（不会显示「完成」或「关闭」）
+1. 从 [Releases](../../releases/latest) 下载 `安装.pkg`
+2. 双击 → 输入登录密码 → 安装器最后一步点 **「重新启动」**
 
 > 包未签名。如果提示「无法验证开发者」：**右键点 pkg → 打开 → 再点「打开」**。
 >
 > 或者用命令行：
 > ```bash
-> sudo installer -pkg LaunchpadRestore-Install.pkg -target /
+> sudo installer -pkg 安装.pkg -target /
 > ```
 
 重启后点 Dock 第二个图标（或按 `F4`）就是老启动台。
@@ -40,7 +42,7 @@
 
 ## 还原
 
-双击 [`pkg/LaunchpadRestore-Rollback.pkg`](pkg/LaunchpadRestore-Rollback.pkg) → 输入密码 → 安装器最后一步点 **「重新启动」**（不是「完成」或「关闭」）。
+从 [Releases](../../releases/latest) 下载 `还原.pkg` → 双击 → 输入密码 → 安装器最后一步点 **「重新启动」**。
 
 安装时会**自动备份这台机器自己的 `Dock.app`** 到：
 
@@ -96,59 +98,6 @@ sudo rm -rf "/Library/Application Support/LaunchpadRestore/Dock.app.orig"
 
 ---
 
-## 出问题怎么办
-
-### 装完点图标没反应？
-
-**先确认 Dock 版本对不对**：
-
-```bash
-defaults read /System/Library/CoreServices/Dock.app/Contents/Info.plist CFBundleVersion
-```
-
-应该是 `2419`。如果还是 `2427.6`，说明没装成功或者还没重启。
-
-> 注意：**装完没重启时，这条命令读到的还是旧版本**——它读的是正在运行的那份系统快照。
-> 要判断装没装成功，看日志里的「已替换为版本」：
-> `sudo tail -20 /var/log/launchpadrestore.log`
-
-**版本对了但点图标没反应**，检查 LaunchServices 有没有重复注册：
-
-```bash
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump \
-  | grep -E "^path:.*Apps\.app"
-```
-
-正常应该**只有一行** `/System/Applications/Apps.app`。如果还有别的路径，逐个注销再重启 Dock：
-
-```bash
-lsregister -u /那个路径/Apps.app
-killall Dock
-```
-
-> ⚠️ **重要**：不要把你的 `Dock.app` / `Apps.app` 备份以 `.app` 形式放在 `~/Documents`、桌面
-> 或任何用户目录——LaunchServices 会自动索引它们。如果里面的 `Apps.app` 的 bundle id 和系统
-> 那个撞了（都是 `com.apple.apps.launcher`），点击就会被解析到你的备份壳上，表现为「点了没反应」。
-> **打包成 zip 存放**即可，需要时再解压。
-
-这个坑很阴：刚放进去时不生效（LS 还没索引），**重启之后才开始坏**。
-
-### 重启后 Dock 崩溃 / 黑屏 / 没有桌面
-
-
-1. 长按电源键关机，开机按住 `Cmd+R` 进恢复模式
-2. 菜单栏「实用工具」→「终端」
-3. 把备份换回去（卷名换成你的系统盘名）：
-
-```bash
-cp -R "/Volumes/Macintosh HD/Library/Application Support/LaunchpadRestore/Dock.app.orig" \
-      "/Volumes/Macintosh HD/System/Library/CoreServices/Dock.app"
-```
-
-4. 重启
-
----
-
 ## 已知取舍
 
 `Dock.app` 版本 `2419` 是 26.0 的，比 26.7.1 落后 7 个小版本，缺少 26.1–26.7 的 Dock 修复。
@@ -156,20 +105,6 @@ cp -R "/Volumes/Macintosh HD/Library/Application Support/LaunchpadRestore/Dock.a
 
 如果你手上有更接近的新版本（比如 26.5、26.6 的 `Dock.app`，且仍保留启动台代码），
 可以用 [`scripts/build-pkg.sh`](scripts/build-pkg.sh) 自行打包。
-
----
-
-## 为什么不是「放一个 Launchpad.app」
-
-这条路试过，走不通。26 的 `Launchpad.app` 只有 **99 KB**，它只是个触发器——发一条
-`com.apple.launchpad.toggle` 就退出，**界面完全由 Dock 绘制**。所以：
-
-- 放 `Launchpad.app` → 进程启动即退，Dock 无反应
-- 改 bundle id → 无效
-- 改 `com.apple.dock showSpotlightBasedLaunchpad` 偏好 → Dock 根本不读这个键
-- 只写 `SpotlightPlus` FeatureFlag → 无效（`Apps.app` 没声明 `LSRequiredFeatureFlags`，开关没有作用对象）
-
-详见 [`docs/原理.md`](docs/原理.md)。
 
 ---
 
