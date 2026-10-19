@@ -7,6 +7,12 @@
 #
 # 用法：./fix-launchpad-icon.sh <App.app> [更多 App.app ...]
 #       ./fix-launchpad-icon.sh --scan          # 只列出所有白图条目，不修改
+#       ./fix-launchpad-icon.sh --fix-all       # 自动扫出全部白图条目并逐个修复
+#
+# ⚠️ 两类白图，只有第一类能修：
+#    可修   —— 注入后 Dock 重启会重新渲染成功，缓存被换成正确图，长期有效
+#    不可修 —— Dock(2419) 渲染该图标必然失败，注入后 10 秒内被覆盖回 818 字节
+#              （实测：旁白实用工具、语音备忘录）只能接受，或换回新版 Dock
 #
 set -euo pipefail
 
@@ -41,6 +47,40 @@ if [ "$1" = "--scan" ]; then
     select length(image_data) as big, count(*) as cnt
     from image_cache group by big order by cnt desc limit 5;"
   exit 0
+fi
+
+# ---------- --fix-all：扫出全部白图条目，反查路径后走正常流程 ----------
+if [ "$1" = "--fix-all" ]; then
+  echo
+  echo "=== 扫描白图条目 ==="
+  IDS=$(/usr/bin/sqlite3 "$DB/db" "
+    select a.bundleid from apps a join image_cache i on i.item_id = a.item_id
+    where length(i.image_data) < 5000;")
+  if [ -z "$IDS" ]; then
+    echo "没有白图条目，无需修复。"
+    exit 0
+  fi
+
+  PATHS=()
+  for BID in $IDS; do
+    # 用 Spotlight 反查 app 路径，排除废纸篓里的副本
+    P=$(/usr/bin/mdfind "kMDItemCFBundleIdentifier == '$BID'" 2>/dev/null \
+        | /usr/bin/grep -v '^/Users/.*/\.Trash/' \
+        | /usr/bin/grep '\.app$' | head -1 || true)
+    if [ -n "$P" ] && [ -d "$P" ]; then
+      echo "  ✓ $BID → $P"
+      PATHS+=("$P")
+    else
+      echo "  ⚠ $BID 找不到 .app 路径，跳过"
+    fi
+  done
+
+  if [ ${#PATHS[@]} -eq 0 ]; then
+    echo "✗ 没有可修复的条目"
+    exit 1
+  fi
+  echo
+  set -- "${PATHS[@]}"
 fi
 
 TMP=$(mktemp -d)
@@ -125,11 +165,22 @@ sleep 3
 
 # ---------- 验证 ----------
 echo
-echo "=== 写入结果 ==="
-/usr/bin/sqlite3 -header -column "$DB/db" "
-  select a.title, length(i.image_data) as big, length(i.image_data_mini) as mini
+echo "等 Dock 起来重新渲染…"
+sleep 10
+
+echo "=== 复查：仍为白图的条目 ==="
+REMAIN=$(/usr/bin/sqlite3 -header -column "$DB/db" "
+  select a.title, length(i.image_data) as big
   from apps a join image_cache i on i.item_id = a.item_id
-  where length(i.image_data) > 0 order by a.item_id desc limit 5;"
+  where length(i.image_data) < 5000;")
+if [ -z "$REMAIN" ]; then
+  echo "  无 —— 全部修复成功"
+else
+  echo "$REMAIN"
+  echo
+  echo "⚠ 上面这些是「不可修」类：Dock(2419) 渲染它们的图标必然失败，"
+  echo "  注入的正确缓存会在 Dock 启动后被覆盖回 818 字节。重跑也无效。"
+fi
 
 echo
-echo "完成。打开启动台查看；若仍是白图，等 Dock 完全起来后重跑本脚本。"
+echo "完成。打开启动台查看。"

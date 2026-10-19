@@ -118,18 +118,31 @@ sqlite3 -header -column "$DB/db" "
 **修复**：
 
 ```bash
-./scripts/fix-launchpad-icon.sh --scan                               # 只诊断，列出白图条目
-./scripts/fix-launchpad-icon.sh /System/Applications/VoiceMemos.app  # 修复指定 app
+./scripts/fix-launchpad-icon.sh --scan                     # 只诊断，列出白图条目
+./scripts/fix-launchpad-icon.sh --fix-all                  # 自动扫出全部白图并逐个修复
+./scripts/fix-launchpad-icon.sh /Applications/1401.app     # 修指定 app
 ```
 
 脚本做的事：按缓存的原生规格重新生成图标写回去，再重启 Dock。
 
 - 大图 **128×128 16-bit RGBA**、小图 **30×30 8-bit RGBA** —— 16-bit 这点容易漏，普通 PNG 默认是 8-bit
 - 写库前必须先 `killall Dock` 释放数据库连接，否则会被占用
-- 写入后等几秒复查长度没被覆盖回 818 才算成功
+
+### 两类白图，只有一类能修
+
+修完等 10 秒复查，`length(image_data)` **还是 818 的就是第二类**：
+
+| 类型 | 特征 | 结果 |
+|---|---|---|
+| 可修 | Dock 重启后重新渲染成功（长度变成 12–30 KB 的另一张图） | 长期有效 |
+| **不可修** | 每次注入都被覆盖回 818 字节 | 重跑无效，只能接受或换回新版 Dock |
+
+实测 `1401`、`MyKextInstaller` 属第一类，`旁白实用工具`、`语音备忘录` 属第二类。
+判断方法就一句：**注入后 Dock 起来再看一眼，还是 818 就别再试了**。
 
 **为什么会出现**：`2419` 的 Dock 渲染新格式图标（`Assets.car` 里的 `IconGroup` 变体）时可能超时失败，
-直接落一张白图。清图标缓存或系统更新后可能复发，重跑脚本即可。
+直接落一张白图。**每次 Dock 重启都会重新渲染，可能换一批 App 中招**——所以重启系统后发现
+「某两个 App 图标没了」，绝大多数就是这回事：App 没丢，只是图标变白，跑一次 `--fix-all` 即可。
 
 ---
 
