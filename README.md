@@ -2,6 +2,8 @@
 
 把 macOS 26 上被砍掉的**原生启动台（Launchpad）**找回来。
 
+**[⬇️ 下载最新版](../../releases/latest)** · [原理说明](docs/原理.md) · [构建方法](scripts/build-pkg.sh)
+
 > **一句话原理**：macOS 26.0 的 `Dock.app`（版本 `2419`）里还完整保留着老启动台的界面代码，
 > 26.1 之后被苹果删掉了。**只替换 `Dock.app` 就能恢复**——不需要关闭 SIP、不需要降级系统、
 > 不需要替换 Spotlight 或 Apps。
