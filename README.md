@@ -35,6 +35,11 @@
 > ```bash
 > sudo installer -pkg LaunchpadRestore-Install.pkg -target /
 > ```
+>
+> **v1.2 及更早的包有个小 bug**：装完最后一屏显示「完成」而不是「重新启动」。
+> 原因是 Distribution 里 `onConclusion` 写成了小写连字符的 `require-restart`，
+> 而 Installer 只认 PascalCase 的 `RequireRestart`，不认识的值静默按 `None` 处理。
+> **不影响安装结果，手动重启一样生效**；新包已修（`scripts/build-pkg.sh` 第 6 步自检会比对具体值）。
 
 重启后点 Dock 第二个图标（或按 `F4`）就是老启动台。
 

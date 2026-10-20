@@ -16,6 +16,9 @@ if [ -z "$DOCK_SRC" ] || [ ! -d "$DOCK_SRC" ]; then
     echo "用法: $0 /path/to/Dock.app"
     exit 1
 fi
+# ★ 必须转成绝对路径：defaults read 传相对路径会当域名字处理，静默返回空，
+#   结果版本号变成 unknown（pkg 和 receipt 里都写 unknown，踩过）
+DOCK_SRC="$(cd "$DOCK_SRC" && pwd)"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -84,6 +87,11 @@ for kind in install rollback; do
 done
 
 # --- 4. distribution XML：让安装器最后一步显示「重新启动」而不是「完成」 ---
+# ★ onConclusion 的取值是 PascalCase 且大小写敏感，只有四个：
+#   None / RequireLogout / RequireRestart / RequireShutdown
+#   写成 require-restart（全小写 + 连字符）Installer 不报错，直接按 None 处理 ——
+#   装完只显示「完成」，不会出现「重新启动」按钮（踩过，见 README「已知问题」）。
+#   依据：Apple《Distribution Definition XML Schema Reference》pkg-ref → onConclusion。
 gen_dist() {
     local kind="$1" title="$2" comp="$3"
     cat > "$BUILD/dist-$kind.xml" <<EOF
@@ -103,7 +111,7 @@ gen_dist() {
     <choice id="com.geekaudio.launchpadrestore.$kind" visible="false">
         <pkg-ref id="com.geekaudio.launchpadrestore.$kind"/>
     </choice>
-    <pkg-ref id="com.geekaudio.launchpadrestore.$kind" version="$VER" onConclusion="require-restart">$comp</pkg-ref>
+    <pkg-ref id="com.geekaudio.launchpadrestore.$kind" version="$VER" onConclusion="RequireRestart">$comp</pkg-ref>
 </installer-gui-script>
 EOF
 }
@@ -119,15 +127,23 @@ productbuild --distribution dist-rollback.xml --package-path . "$ROOT/pkg/Launch
 echo
 ls -lh "$ROOT/pkg/"*.pkg
 
-# --- 6. 自检：确认 onConclusion 生效 ---
+# --- 6. 自检：确认 onConclusion 的值真的对 ---
+# ★ 这里必须比对「具体的值」，不能只判断属性存在 ——
+#   写成 require-restart 时 Installer 静默按 None 处理，属性照样在，只查存在等于自证。
+# ★ 另外 pkgutil --expand 的目标目录不能已存在（Error 17），所以展开到 $tmp/x。
 echo
 for f in "$ROOT/pkg/"*.pkg; do
     tmp="$(mktemp -d)"
-    pkgutil --expand "$f" "$tmp" >/dev/null 2>&1
-    if grep -q 'onConclusion="require-restart"' "$tmp/Distribution" 2>/dev/null; then
-        echo "OK  $(basename "$f")  安装完成显示「重新启动」"
+    if ! pkgutil --expand "$f" "$tmp/x" >/dev/null 2>&1; then
+        echo "FAIL $(basename "$f")  无法展开"
+        rm -rf "$tmp"
+        continue
+    fi
+    got="$(grep -o 'onConclusion="[^"]*"' "$tmp/x/Distribution" 2>/dev/null | head -1)"
+    if [ "$got" = 'onConclusion="RequireRestart"' ]; then
+        echo "OK  $(basename "$f")  $got  安装完成显示「重新启动」"
     else
-        echo "FAIL $(basename "$f")  onConclusion 缺失"
+        echo "FAIL $(basename "$f")  ${got:-onConclusion 缺失}（应为 RequireRestart）"
     fi
     rm -rf "$tmp"
 done
