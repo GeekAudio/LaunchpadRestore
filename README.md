@@ -2,13 +2,13 @@
 
 在 macOS 26 上提供可分页、可整理文件夹的启动台。
 
-> **当前预发布 v1.4：完整原生启动台 2427.6.10**。仅支持 macOS 26.7.1（25G241）、Intel / x86_64，
+> **当前正式版 v1.4：完整原生启动台 2427.6.10**。仅支持 macOS 26.7.1（25G241）、Intel / x86_64，
 > 携带完整 Dock 及资源，不要求目标预装旧启动台或 OCLP。第九版的分辨率修复已获本机成功反馈。
 > 独立 `Lunchpad.app` 作为另一种实现保留；它与 Apple 原生启动台的交互不同。
 
 **[完整原生包 v1.4](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.4)** · [原理说明](docs/原理.md) · [旧版构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
 
-> 安装包放在 [v1.4 预发布](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.4) 附件中，不进 git 历史。
+> 安装包放在 [v1.4 发布](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.4) 附件中，不进 git 历史。
 
 ## 完整原生安装包（2427.6.10）
 
@@ -17,7 +17,7 @@
 - 单独下载：[安装包 Install](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.4/LaunchpadRestore-Native2427-Install-2427.6.10.pkg)
 - 单独下载：[卸载还原包 Uninstall](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.4/LaunchpadRestore-Native2427-Uninstall-2427.6.10.pkg)
 
-**v1.4 标记为预发布**：尚未在另一台未安装 OCLP 的电脑上实际验证首次安装；重启后首次打开时
+**已知限制**：尚未在另一台未安装 OCLP 的电脑上实际验证首次安装；重启后首次打开时
 偶见两个空白图标、反复开关后恢复的问题也尚未修复。
 
 完整包包含 468 个 Dock 文件、图像资源、插件和 XPC 辅助程序，以及渲染设置和备份校验工具。
