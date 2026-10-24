@@ -1,5 +1,9 @@
 .DS_Store
 *.swp
 *.bak
-pkg/*.pkg
-pkg/*.zip
+/pkg/
+standalone/.build/
+standalone/.swiftpm/
+native/.build/
+__pycache__/
+*.py[cod]

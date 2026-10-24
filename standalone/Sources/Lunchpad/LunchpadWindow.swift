@@ -1,0 +1,532 @@
+import AppKit
+import CoreGraphics
+import QuartzCore
+
+private let lunchpadMenuBarCoverColor = NSColor(
+    calibratedRed: 0.05,
+    green: 0.07,
+    blue: 0.10,
+    alpha: 1
+)
+
+/// The full-screen blurred backdrop. It stays below the Dock and ignores mouse input.
+final class LunchpadBackdropWindow: NSWindow {
+    let effectView = NSVisualEffectView()
+
+    init() {
+        super.init(
+            contentRect: .zero,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = false
+        isReleasedWhenClosed = false
+        ignoresMouseEvents = true
+        animationBehavior = .none
+
+        effectView.material = .fullScreenUI
+        effectView.blendingMode = .behindWindow
+        effectView.state = .active
+        effectView.appearance = NSAppearance(named: .darkAqua)
+        contentView = effectView
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// A top mask for the interaction window that covers the menu bar and fades into the backdrop.
+final class MenuBarGradientView: NSView {
+    private let gradientLayer = CAGradientLayer()
+    var referenceHeight: CGFloat? {
+        didSet { needsLayout = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        gradientLayer.colors = [
+            lunchpadMenuBarCoverColor.cgColor,
+            lunchpadMenuBarCoverColor.cgColor,
+            lunchpadMenuBarCoverColor.withAlphaComponent(0).cgColor,
+        ]
+        gradientLayer.locations = [0, 0.30, 1]
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 1)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        layer?.addSublayer(gradientLayer)
+        layer?.masksToBounds = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        // The corner window renders the matching top slice of the full-height gradient.
+        let height = max(bounds.height, referenceHeight ?? bounds.height)
+        gradientLayer.frame = NSRect(
+            x: bounds.minX,
+            y: bounds.maxY - height,
+            width: bounds.width,
+            height: height
+        )
+    }
+
+    // The visual layer ignores hit testing; the transparent interaction layer handles empty clicks.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Fills the menu-bar corner above a vertical Dock without intercepting interaction.
+final class MenuBarDockCornerWindow: NSWindow {
+    let gradientView = MenuBarGradientView()
+
+    init() {
+        super.init(
+            contentRect: .zero,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = false
+        isReleasedWhenClosed = false
+        ignoresMouseEvents = true
+        animationBehavior = .none
+        contentView = gradientView
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// Lunchpad's full-screen, borderless, blurred interaction window.
+/// Escape, empty-space clicks, and app launches hide it while monitors remain resident.
+final class LunchpadWindow: NSWindow {
+    private let rootView = NSView()
+    private let backdropWindow = LunchpadBackdropWindow()
+    private let menuBarGradientView = MenuBarGradientView()
+    private let menuBarDockCornerWindow = MenuBarDockCornerWindow()
+    private let gridView: IconGridView
+    private let rootPageStore: RootPageStore
+    /// Delivered when the user completes a drag arrangement; the owner persists it.
+    var onDragCommit: ((LunchpadDragCommit) -> Void)?
+    /// Delivered when an application could not be opened after the launcher closed.
+    var onLaunchFailure: ((AppItem, Error) -> Void)?
+    /// Delivered with a folder identifier and its new name.
+    var onFolderRename: ((String, String) -> Void)?
+    /// Delivered with the identifier of a user folder to delete.
+    var onFolderDelete: ((String) -> Void)?
+    private(set) var isAnimatingClose = false
+    private var presentationGeneration = 0
+    /// The display hosting the current presentation, used to follow display reconfigurations.
+    private var presentedDisplayID: CGDirectDisplayID?
+    private var menuBarGradientHeightConstraint: NSLayoutConstraint!
+
+    init(
+        items: [LunchpadItem],
+        localizer: AppLocalizer,
+        rootPageStore: RootPageStore,
+        allowsDragArrangement: Bool = true
+    ) {
+        gridView = IconGridView(
+            items: items,
+            localizer: localizer,
+            allowsDragArrangement: allowsDragArrangement
+        )
+        self.rootPageStore = rootPageStore
+        super.init(
+            contentRect: NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        // One continuous window covers both the application area and menu bar to avoid a seam.
+        // It does not enter the Dock region, so the Dock remains visible and interactive.
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+
+        // The high-level window hosts interaction and icons; the backdrop is a separate
+        // full-screen window below the Dock.
+        backgroundColor = .clear
+        isOpaque = false
+        ignoresMouseEvents = false
+        hasShadow = false
+        acceptsMouseMovedEvents = true
+        isReleasedWhenClosed = false
+        // Borderless windows may still receive the system scale transition unless disabled.
+        animationBehavior = .none
+
+        rootView.wantsLayer = true
+        // A fully transparent window is not a scroll hit target. One-percent black creates an
+        // event surface without visible impact and prevents WindowServer from forwarding scrolls.
+        rootView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.01).cgColor
+
+        menuBarGradientView.translatesAutoresizingMaskIntoConstraints = false
+        gridView.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(menuBarGradientView)
+        rootView.addSubview(gridView)
+
+        // Every close path hides the reusable window instead of destroying it.
+        gridView.onLaunch = { [weak self] in
+            self?.close()
+        }
+        gridView.onBackgroundClick = { [weak self] in
+            self?.close()
+        }
+        gridView.onDragCommit = { [weak self] commit in
+            self?.onDragCommit?(commit)
+        }
+        gridView.onLaunchFailure = { [weak self] app, error in
+            self?.onLaunchFailure?(app, error)
+        }
+        gridView.onFolderRename = { [weak self] identifier, name in
+            self?.onFolderRename?(identifier, name)
+        }
+        gridView.onFolderDelete = { [weak self] identifier in
+            self?.onFolderDelete?(identifier)
+        }
+        contentView = rootView
+
+        menuBarGradientHeightConstraint = menuBarGradientView.heightAnchor.constraint(
+            equalToConstant: 112
+        )
+        NSLayoutConstraint.activate([
+            menuBarGradientView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            menuBarGradientView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            menuBarGradientView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            menuBarGradientHeightConstraint,
+
+            gridView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            gridView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            gridView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            gridView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+        ])
+
+    }
+
+    /// Presents the launcher on the supplied screen.
+    ///
+    /// All launcher-owned windows (interaction surface, backdrop, menu-bar Dock corner) derive
+    /// their frames, safe-area insets, and grid height from `targetScreen` so they cannot diverge
+    /// during a multi-display activation. Callers that do not supply a target screen retain the
+    /// previous main-screen behavior.
+    func show(on targetScreen: NSScreen? = nil) {
+        let screen = targetScreen ?? NSScreen.main
+        if let screen {
+            applyGeometry(for: screen)
+        }
+        presentedDisplayID = screen?.displayID
+        let restoredRootPage = rootPageStore.restoredPage(
+            availablePageCount: gridView.rootPageCount
+        )
+        gridView.prepareForPresentation(restoredRootPage: restoredRootPage)
+        isAnimatingClose = false
+        presentationGeneration &+= 1
+        let generation = presentationGeneration
+        alphaValue = 1
+        backdropWindow.alphaValue = 0
+        menuBarDockCornerWindow.alphaValue = 0
+        menuBarGradientView.alphaValue = 0
+        gridView.alphaValue = 0
+        backdropWindow.orderFrontRegardless()
+        if !menuBarDockCornerWindow.frame.isEmpty {
+            menuBarDockCornerWindow.orderFrontRegardless()
+        }
+        makeKeyAndOrderFront(nil)
+        rootView.layoutSubtreeIfNeeded()
+
+        // Commit the complete alpha-zero state before starting a fixed-duration fade next turn.
+        DispatchQueue.main.async { [weak self] in
+            guard
+                let self,
+                self.isVisible,
+                !self.isAnimatingClose,
+                self.presentationGeneration == generation
+            else {
+                return
+            }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.42
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                self.backdropWindow.animator().alphaValue = 1
+                self.menuBarDockCornerWindow.animator().alphaValue = 1
+                self.menuBarGradientView.animator().alphaValue = 1
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+                guard
+                    let self,
+                    self.isVisible,
+                    !self.isAnimatingClose,
+                    self.presentationGeneration == generation
+                else {
+                    return
+                }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.30
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    self.gridView.animator().alphaValue = 1
+                }
+            }
+        }
+    }
+
+    /// Keeps a visible launcher aligned with its display when the display configuration changes,
+    /// such as a resolution, arrangement, Dock, or menu-bar change. If the hosting display was
+    /// disconnected, the launcher closes rather than staying on a stale frame.
+    func screenParametersDidChange() {
+        guard isVisible, !isAnimatingClose else { return }
+        let screens = NSScreen.screens
+        guard let index = ScreenSelectionPolicy.presentedScreenIndex(
+            displayID: presentedDisplayID,
+            displayIDs: screens.map(\.displayID)
+        ) else {
+            close()
+            return
+        }
+
+        applyGeometry(for: screens[index])
+        if !menuBarDockCornerWindow.frame.isEmpty, !menuBarDockCornerWindow.isVisible {
+            menuBarDockCornerWindow.alphaValue = backdropWindow.alphaValue
+            menuBarDockCornerWindow.orderFrontRegardless()
+        }
+        rootView.layoutSubtreeIfNeeded()
+    }
+
+    /// Derives every launcher-owned window frame, safe-area inset, and grid height from one screen
+    /// so they cannot diverge.
+    private func applyGeometry(for screen: NSScreen) {
+        let contentFrame = presentationFrame(for: screen)
+        setFrame(contentFrame, display: true)
+        backdropWindow.setFrame(screen.frame, display: true)
+        if let cornerFrame = menuBarDockCornerFrame(
+            for: screen,
+            contentFrame: contentFrame
+        ) {
+            menuBarDockCornerWindow.setFrame(cornerFrame, display: true)
+        } else {
+            menuBarDockCornerWindow.orderOut(nil)
+            menuBarDockCornerWindow.setFrame(.zero, display: false)
+        }
+        let insets = contentInsets(for: screen, contentFrame: contentFrame)
+        menuBarGradientHeightConstraint.constant = max(96, insets.top + 72)
+        menuBarDockCornerWindow.gradientView.referenceHeight =
+            menuBarGradientHeightConstraint.constant
+        gridView.updateScreenInsets(
+            insets,
+            availableHeight: contentFrame.height,
+            availableWidth: contentFrame.width
+        )
+    }
+
+    func update(
+        items: [LunchpadItem],
+        catalogChanged: Bool,
+        invalidatedIconPaths: Set<String>?
+    ) {
+        gridView.updateItems(
+            items,
+            animated: catalogChanged && isVisible && !isAnimatingClose,
+            invalidatedIconPaths: invalidatedIconPaths
+        )
+    }
+
+    func refreshLocalizedContent() {
+        gridView.refreshLocalizedContent()
+    }
+
+    override func close() {
+        guard isVisible, !isAnimatingClose else { return }
+        gridView.commitFolderTitleEdit()
+        rootPageStore.save(page: gridView.rootPageForPersistence)
+        isAnimatingClose = true
+        presentationGeneration &+= 1
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            gridView.animator().alphaValue = 0
+        }
+
+        // Keep the backdrop full-screen during exit and animate opacity only.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            backdropWindow.animator().alphaValue = 0
+            menuBarDockCornerWindow.animator().alphaValue = 0
+            menuBarGradientView.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.orderOut(nil)
+                self.backdropWindow.orderOut(nil)
+                self.menuBarDockCornerWindow.orderOut(nil)
+                self.backdropWindow.alphaValue = 1
+                self.menuBarDockCornerWindow.alphaValue = 1
+                self.menuBarGradientView.alphaValue = 1
+                self.gridView.alphaValue = 1
+                self.isAnimatingClose = false
+            }
+        }
+    }
+
+    private func contentInsets(for screen: NSScreen, contentFrame: NSRect) -> NSEdgeInsets {
+        let visibleFrame = screen.visibleFrame
+        let safeArea = screen.safeAreaInsets
+
+        return NSEdgeInsets(
+            top: max(safeArea.top, contentFrame.maxY - visibleFrame.maxY),
+            left: max(safeArea.left, visibleFrame.minX - contentFrame.minX),
+            bottom: max(safeArea.bottom, visibleFrame.minY - contentFrame.minY),
+            right: max(safeArea.right, contentFrame.maxX - visibleFrame.maxX)
+        )
+    }
+
+    private func presentationFrame(for screen: NSScreen) -> NSRect {
+        let frame = screen.frame
+        let visibleFrame = screen.visibleFrame
+        let bottomInset = max(0, visibleFrame.minY - frame.minY)
+        let leftInset = max(0, visibleFrame.minX - frame.minX)
+        let rightInset = max(0, frame.maxX - visibleFrame.maxX)
+        let largestInset = max(bottomInset, leftInset, rightInset)
+
+        guard largestInset > 0 else {
+            return frame
+        }
+
+        if bottomInset == largestInset {
+            return NSRect(
+                x: frame.minX,
+                y: frame.minY + bottomInset,
+                width: frame.width,
+                height: frame.height - bottomInset
+            )
+        }
+
+        if leftInset == largestInset {
+            return NSRect(
+                x: frame.minX + leftInset,
+                y: frame.minY,
+                width: frame.width - leftInset,
+                height: frame.height
+            )
+        }
+
+        return NSRect(
+            x: frame.minX,
+            y: frame.minY,
+            width: frame.width - rightInset,
+            height: frame.height
+        )
+    }
+
+    private func menuBarDockCornerFrame(
+        for screen: NSScreen,
+        contentFrame: NSRect
+    ) -> NSRect? {
+        let screenFrame = screen.frame
+        let menuBarHeight = max(
+            screen.safeAreaInsets.top,
+            screenFrame.maxY - screen.visibleFrame.maxY
+        )
+        guard menuBarHeight > 0 else { return nil }
+
+        // A vertical Dock leaves roughly half a menu-bar height above its rounded container.
+        // Extend the corner window through that gap using the same gradient.
+        let sideDockTopGap = max(14, min(28, menuBarHeight * 0.5))
+        let cornerHeight = menuBarHeight + sideDockTopGap
+
+        let leftDockWidth = max(0, contentFrame.minX - screenFrame.minX)
+        let rightDockWidth = max(0, screenFrame.maxX - contentFrame.maxX)
+
+        if rightDockWidth > 0 {
+            return NSRect(
+                x: contentFrame.maxX,
+                y: screenFrame.maxY - cornerHeight,
+                width: rightDockWidth,
+                height: cornerHeight
+            )
+        }
+
+        if leftDockWidth > 0 {
+            return NSRect(
+                x: screenFrame.minX,
+                y: screenFrame.maxY - cornerHeight,
+                width: leftDockWidth,
+                height: cornerHeight
+            )
+        }
+
+        return nil
+    }
+
+    // Borderless windows cannot become key by default; override this to receive Escape.
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    /// Owns paging input at the window boundary. An active pointer swipe keeps receiving drag/up
+    /// even after its collection view becomes hit-test transparent, and every new press resolves
+    /// only after an earlier page settle has committed its visible destination.
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            gridView.prepareForPointerMouseDown()
+            super.sendEvent(event)
+        case .leftMouseDragged, .leftMouseUp:
+            if !gridView.routeActivePointerSwipeEvent(event) {
+                super.sendEvent(event)
+            }
+        case .scrollWheel:
+            // Horizontal input pages; vertical input is deliberately discarded so it cannot
+            // leak through the full-screen overlay to applications below Lunchpad.
+            gridView.handleScrollWheel(event)
+        default:
+            super.sendEvent(event)
+        }
+    }
+
+    // Escape (key code 53) closes the current level or window. Plain arrow keys move the active
+    // grid item within the current page; they no longer page between pages. Return and keypad Enter
+    // activate the active item or the first search result.
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 53: // Escape
+            if !gridView.dismissOpenFolder() {
+                close()
+            }
+        case 123: // Left arrow
+            if !gridView.handleNavigationCommand(.left) {
+                super.keyDown(with: event)
+            }
+        case 124: // Right arrow
+            if !gridView.handleNavigationCommand(.right) {
+                super.keyDown(with: event)
+            }
+        case 125: // Down arrow
+            if !gridView.handleNavigationCommand(.down) {
+                super.keyDown(with: event)
+            }
+        case 126: // Up arrow
+            if !gridView.handleNavigationCommand(.up) {
+                super.keyDown(with: event)
+            }
+        case 36, 76: // Return, keypad Enter
+            if !gridView.activateActiveItemOrFirstSearchResult() {
+                super.keyDown(with: event)
+            }
+        default:
+            super.keyDown(with: event)
+        }
+    }
+}
