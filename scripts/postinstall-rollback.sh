@@ -7,8 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 PACKAGE_MANIFEST="$SCRIPT_DIR/package-manifest.plist"
 BACKUP_DIR="/Library/Application Support/LaunchpadRestore"
-ORIG_DOCK="$BACKUP_DIR/Dock.app.orig"
-BACKUP_MANIFEST="$BACKUP_DIR/Dock.app.orig.manifest.plist"
 BUNDLE_STATE_HELPER="$BACKUP_DIR/dock-bundle-state"
 MNT="/System/Volumes/Update/LaunchpadRestore-Rollback-$$"
 LOCK_DIR="/var/run/launchpadrestore.lock"
@@ -23,6 +21,7 @@ exec >>"$LOG" 2>&1
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') 还原开始 ====="
 
 fail() { echo "失败: $*"; echo "===== 中止 ====="; exit 1; }
+plist_value() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
 
 restore_previous() {
     [ "$SWAP_ACTIVE" = 1 ] || return 0
@@ -68,23 +67,148 @@ trap cleanup_all EXIT
 trap 'exit 1' HUP INT TERM
 [ "$(id -u)" = 0 ] || fail "安装器必须以 root 运行"
 [ "${3:-/}" = / ] || fail "只支持还原当前启动系统"
-if [ -f "$PACKAGE_MANIFEST" ]; then
-    package_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$PACKAGE_MANIFEST" 2>/dev/null; }
-    [ "$(package_value FormatVersion)" = 1 ] || fail "卸载包清单格式不受支持"
-    [ "$(sw_vers -productVersion)" = "$(package_value SupportedProductVersion)" ] \
-        && [ "$(sw_vers -buildVersion)" = "$(package_value SupportedBuildVersion)" ] \
-        && [ "$(uname -m)" = "$(package_value SupportedArchitecture)" ] \
-        || fail "此卸载包不支持当前系统版本、build 或架构"
+OS_VERSION="$(sw_vers -productVersion)"
+OS_BUILD="$(sw_vers -buildVersion)"
+ARCH="$(uname -m)"
+PROFILE_PRODUCT=""
+PROFILE_BUILD=""
+PROFILE_ARCH=""
+PROFILE_STOCK_SHA=""
+PROFILE_STOCK_INFO_SHA=""
+PROFILE_CANDIDATE_SHA=""
+PROFILE_VARIANT_DIR=""
+PROFILE_EXPERIMENT=""
+package_value() { plist_value "$PACKAGE_MANIFEST" "$1"; }
+if [ -e "$PACKAGE_MANIFEST" ] || [ -L "$PACKAGE_MANIFEST" ]; then
+    [ -f "$PACKAGE_MANIFEST" ] && [ ! -L "$PACKAGE_MANIFEST" ] \
+        || fail "卸载包清单不是普通文件"
+    PACKAGE_FORMAT="$(package_value FormatVersion)"
+    case "$PACKAGE_FORMAT" in
+        2)
+            PROFILE_HELPER="$SCRIPT_DIR/native-package-profile.sh"
+            [ -f "$PROFILE_HELPER" ] && [ ! -L "$PROFILE_HELPER" ] \
+                || fail "卸载包缺少系统版本配置工具"
+            . "$PROFILE_HELPER"
+            lpr_select_package_profile "$PACKAGE_MANIFEST" \
+                || fail "此卸载包不支持当前系统版本、build 或架构"
+            [ "$OS_VERSION" = "$PROFILE_PRODUCT" ] && [ "$OS_BUILD" = "$PROFILE_BUILD" ] \
+                && [ "$ARCH" = "$PROFILE_ARCH" ] \
+                || fail "系统版本配置工具返回的目标与当前系统不匹配"
+            [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+                || fail "卸载包未提供当前系统的原版 Dock 校验值"
+            ;;
+        1)
+            PROFILE_PRODUCT="$(package_value SupportedProductVersion)"
+            PROFILE_BUILD="$(package_value SupportedBuildVersion)"
+            PROFILE_ARCH="$(package_value SupportedArchitecture)"
+            [ "$OS_VERSION" = "$PROFILE_PRODUCT" ] && [ "$OS_BUILD" = "$PROFILE_BUILD" ] \
+                && [ "$ARCH" = "$PROFILE_ARCH" ] \
+                || fail "此旧版卸载包不支持当前系统版本、build 或架构"
+            [ "$PROFILE_PRODUCT" = 26.7.1 ] && [ "$PROFILE_BUILD" = 25G241 ] \
+                && [ "$PROFILE_ARCH" = x86_64 ] \
+                || fail "Format 1 卸载包只支持 macOS 26.7.1 (25G241) x86_64"
+            # Format 1 shipped only with the 26.7.1 / 25G241 Dock profile.
+            PROFILE_STOCK_SHA="278ed95b86bdef7e122820a0251c5a607fec377c217fae34a651397e8082e193"
+            PROFILE_STOCK_INFO_SHA="df5a816eb4136b81c281ecbc4fe910cf82fbc572268219ae950c569a3ac5c2ab"
+            ;;
+        *) fail "卸载包清单格式不受支持" ;;
+    esac
+else
+    # Keep direct invocation of the old standalone rollback script usable for
+    # its one documented OS build. Packaged v11 rollbacks always use Format 2.
+    if [ "$OS_VERSION" = 26.7.1 ] && [ "$OS_BUILD" = 25G241 ] && [ "$ARCH" = x86_64 ]; then
+        PROFILE_PRODUCT="$OS_VERSION"
+        PROFILE_BUILD="$OS_BUILD"
+        PROFILE_ARCH="$ARCH"
+        PROFILE_STOCK_SHA="278ed95b86bdef7e122820a0251c5a607fec377c217fae34a651397e8082e193"
+        PROFILE_STOCK_INFO_SHA="df5a816eb4136b81c281ecbc4fe910cf82fbc572268219ae950c569a3ac5c2ab"
+    else
+        fail "缺少系统版本清单；无清单的旧卸载脚本只支持 macOS 26.7.1 (25G241) x86_64"
+    fi
 fi
 mkdir "$LOCK_DIR" 2>/dev/null || fail "另一个 LaunchpadRestore 安装或还原操作正在运行: $LOCK_DIR"
 LOCK_HELD=1
 
+CURRENT_DOCK="/System/Library/CoreServices/Dock.app"
+CURRENT_EXEC="$CURRENT_DOCK/Contents/MacOS/Dock"
+CURRENT_SHA=""
+CURRENT_INFO_SHA=""
+if [ -f "$CURRENT_EXEC" ] && [ ! -L "$CURRENT_EXEC" ]; then
+    CURRENT_SHA="$(shasum -a 256 "$CURRENT_EXEC" | awk '{print $1}')"
+fi
+if [ -f "$CURRENT_DOCK/Contents/Info.plist" ] && [ ! -L "$CURRENT_DOCK/Contents/Info.plist" ]; then
+    CURRENT_INFO_SHA="$(shasum -a 256 "$CURRENT_DOCK/Contents/Info.plist" | awk '{print $1}')"
+fi
+CURRENT_IS_STOCK=0
+[ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+    && [ "$CURRENT_SHA" = "$PROFILE_STOCK_SHA" ] \
+    && [ "$CURRENT_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] && CURRENT_IS_STOCK=1
+
+BUILD_ORIG_DIR="$BACKUP_DIR/Originals/$OS_BUILD"
+BUILD_ORIG_DOCK="$BUILD_ORIG_DIR/Dock.app.orig"
+BUILD_BACKUP_MANIFEST="$BUILD_ORIG_DOCK.manifest.plist"
+LEGACY_ORIG_DOCK="$BACKUP_DIR/Dock.app.orig"
+LEGACY_BACKUP_MANIFEST="$LEGACY_ORIG_DOCK.manifest.plist"
+ORIG_IS_LEGACY=0
+if [ -e "$BUILD_ORIG_DOCK" ] || [ -L "$BUILD_ORIG_DOCK" ] \
+        || [ -e "$BUILD_BACKUP_MANIFEST" ] || [ -L "$BUILD_BACKUP_MANIFEST" ]; then
+    ORIG_DOCK="$BUILD_ORIG_DOCK"
+    BACKUP_MANIFEST="$BUILD_BACKUP_MANIFEST"
+elif [ -e "$LEGACY_ORIG_DOCK" ] || [ -L "$LEGACY_ORIG_DOCK" ] \
+        || [ -e "$LEGACY_BACKUP_MANIFEST" ] || [ -L "$LEGACY_BACKUP_MANIFEST" ]; then
+    ORIG_DOCK="$LEGACY_ORIG_DOCK"
+    BACKUP_MANIFEST="$LEGACY_BACKUP_MANIFEST"
+    ORIG_IS_LEGACY=1
+else
+    OTHER_BUILD_BACKUP=0
+    for OTHER_BACKUP in "$BACKUP_DIR"/Originals/*/Dock.app.orig \
+            "$BACKUP_DIR"/Originals/*/Dock.app.orig.manifest.plist; do
+        if [ -e "$OTHER_BACKUP" ] || [ -L "$OTHER_BACKUP" ]; then
+            OTHER_BUILD_BACKUP=1
+            break
+        fi
+    done
+    if [ "$CURRENT_IS_STOCK" = 1 ]; then
+        if [ "$OTHER_BUILD_BACKUP" = 1 ]; then
+            fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但只找到其他 build 的备份；没有当前 build 可回滚的 Dock"
+        fi
+        fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，且没有该 build 的原版备份可回滚"
+    fi
+    if [ "$OTHER_BUILD_BACKUP" = 1 ]; then
+        fail "找不到 macOS $OS_BUILD 的原版备份；现有备份属于其他 build，拒绝跨 build 还原"
+    fi
+    fail "找不到 macOS $OS_BUILD 的原版备份（可能从未安装过，或备份已被删除）"
+fi
+
+if [ -e "$BACKUP_MANIFEST" ] || [ -L "$BACKUP_MANIFEST" ]; then
+    [ -f "$BACKUP_MANIFEST" ] && [ ! -L "$BACKUP_MANIFEST" ] \
+        || fail "原版备份清单不是普通文件"
+    BACKUP_BUILD="$(plist_value "$BACKUP_MANIFEST" OSBuildVersion)"
+    if [ "$BACKUP_BUILD" != "$OS_BUILD" ]; then
+        if [ "$CURRENT_IS_STOCK" = 1 ]; then
+            if [ -n "$BACKUP_BUILD" ]; then
+                fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但备份清单属于 build $BACKUP_BUILD；没有当前 build 可回滚的 Dock"
+            fi
+            fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但备份清单没有可识别的系统 build；没有当前版本可回滚的 Dock"
+        fi
+        fail "备份清单属于 build ${BACKUP_BUILD:-未知}，与当前 build $OS_BUILD 不符；拒绝跨 build 还原"
+    fi
+fi
+
 if [ ! -d "$ORIG_DOCK" ] || [ -L "$ORIG_DOCK" ]; then
-    fail "找不到原版备份: $ORIG_DOCK（可能从未安装过，或备份已被删除）"
+    if [ "$CURRENT_IS_STOCK" = 1 ]; then
+        fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但该 build 没有可用的 Dock 备份；没有当前版本可回滚的 Dock"
+    fi
+    fail "当前系统 build 的原版备份缺失或不完整: $ORIG_DOCK"
 fi
 ORIG_EXEC="$ORIG_DOCK/Contents/MacOS/Dock"
 ORIG_INFO="$ORIG_DOCK/Contents/Info.plist"
-[ -f "$ORIG_EXEC" ] && [ -f "$ORIG_INFO" ] || fail "原版备份不完整"
+if [ ! -f "$ORIG_EXEC" ] || [ ! -f "$ORIG_INFO" ]; then
+    if [ "$CURRENT_IS_STOCK" = 1 ]; then
+        fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但当前 build 的备份不完整；没有当前版本可回滚的 Dock"
+    fi
+    fail "原版备份不完整"
+fi
 [ ! -L "$ORIG_EXEC" ] && [ ! -L "$ORIG_INFO" ] || fail "原版备份的主程序或 Info.plist 是符号链接"
 SIGNING_INFO="$(codesign -dv --verbose=3 "$ORIG_DOCK" 2>&1)" || fail "无法读取原版备份签名"
 echo "$SIGNING_INFO" | grep -qx 'Identifier=com.apple.dock' || fail "原版备份标识不是 com.apple.dock"
@@ -93,10 +217,6 @@ echo "$SIGNING_INFO" | grep -qx 'Identifier=com.apple.dock' || fail "原版备�
 # independently binds the executable and Info.plist to the target's backup.
 codesign --verify --deep --no-strict "$ORIG_DOCK" || fail "原版备份签名或资源不完整"
 
-plist_value() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
-OS_VERSION="$(sw_vers -productVersion)"
-OS_BUILD="$(sw_vers -buildVersion)"
-ARCH="$(uname -m)"
 ORIG_SHA="$(shasum -a 256 "$ORIG_EXEC" | awk '{print $1}')"
 ORIG_INFO_SHA="$(shasum -a 256 "$ORIG_INFO" | awk '{print $1}')"
 ORIG_VERSION="$(plist_value "$ORIG_INFO" CFBundleVersion)"
@@ -127,6 +247,8 @@ if [ -e "$BACKUP_MANIFEST" ] || [ -L "$BACKUP_MANIFEST" ]; then
         || fail "备份 Dock 主程序 SHA-256 与本机备份清单不匹配"
     [ "$(plist_value "$BACKUP_MANIFEST" DockInfoPlistSHA256)" = "$ORIG_INFO_SHA" ] \
         || fail "备份 Dock Info.plist SHA-256 与本机备份清单不匹配"
+    [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+        || fail "缺少当前系统的原版 Dock 校验配置"
     [ -x "$BUNDLE_STATE_HELPER" ] && [ ! -L "$BUNDLE_STATE_HELPER" ] \
         || fail "缺少本机备份完整性校验工具，请先重新安装完整安装包"
     codesign --verify --strict "$BUNDLE_STATE_HELPER" || fail "本机备份完整性校验工具签名无效"
@@ -135,19 +257,24 @@ if [ -e "$BACKUP_MANIFEST" ] || [ -L "$BACKUP_MANIFEST" ]; then
     echo "本机原版备份清单校验通过: macOS $OS_VERSION ($OS_BUILD), $ARCH"
 else
     # Older releases did not record a manifest. Keep their existing rollback
-    # available only for the exact original Apple binary this project shipped
-    # against. DTSDKName records the SDK used to build an app, not the installed
-    # OS build, so it is not a safe compatibility or provenance check.
-    [ "$OS_VERSION" = 26.7.1 ] && [ "$OS_BUILD" = 25G241 ] && [ "$ARCH" = x86_64 ] \
-        || fail "旧备份没有本机清单，且当前系统不在已确认的旧包回滚范围内"
+    # available only from the shared legacy path and only when both bundle
+    # hashes match the selected OS profile. DTSDKName is not OS provenance.
+    if [ "$ORIG_IS_LEGACY" != 1 ]; then
+        if [ "$CURRENT_IS_STOCK" = 1 ]; then
+            fail "当前 Dock 已是 macOS $OS_VERSION ($OS_BUILD) 原版，但当前 build 的备份缺少本机清单；没有有效的当前版本回滚副本"
+        fi
+        fail "当前 build 的版本目录备份缺少本机清单，拒绝使用无清单备份"
+    fi
+    [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+        || fail "此系统没有已知原版 Dock 校验值，无法安全使用无清单备份"
     [ "$ORIG_VERSION" = 2427.6 ] \
-        && [ "$ORIG_SHA" = 278ed95b86bdef7e122820a0251c5a607fec377c217fae34a651397e8082e193 ] \
-        && [ "$ORIG_INFO_SHA" = df5a816eb4136b81c281ecbc4fe910cf82fbc572268219ae950c569a3ac5c2ab ] \
-        || fail "旧备份没有本机清单，且不匹配已确认的原版 Dock，拒绝还原"
+        && [ "$ORIG_SHA" = "$PROFILE_STOCK_SHA" ] \
+        && [ "$ORIG_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] \
+        || fail "旧备份没有本机清单，且与当前系统已知原版 Dock 不匹配，拒绝还原"
     echo "$SIGNING_INFO" | grep -qx 'Authority=Apple Root CA' || fail "旧版备份缺少 Apple 签名链"
-    echo "旧包原版备份通过固定 SHA-256 校验: macOS $OS_VERSION ($OS_BUILD), $ARCH"
+    echo "旧包原版备份通过当前系统 profile 的 SHA-256 校验: macOS $OS_VERSION ($OS_BUILD), $ARCH"
 fi
-lipo -verify_arch "$ARCH" "$ORIG_EXEC" || fail "原版备份不包含当前系统架构"
+lipo "$ORIG_EXEC" -verify_arch "$ARCH" || fail "原版备份不包含当前系统架构"
 
 echo "备份版本: $ORIG_VERSION"
 echo "备份 Dock SHA-256: $ORIG_SHA"
@@ -167,6 +294,10 @@ MOUNT_POINT_CREATED=1
 mount -o nobrowse -t apfs "/dev/$ROOTDEV" "$MNT" || fail "挂载失败"
 MOUNTED=1
 
+MOUNTED_SYSTEM_INFO="$MNT/System/Library/CoreServices/SystemVersion.plist"
+[ "$(plist_value "$MOUNTED_SYSTEM_INFO" ProductVersion)" = "$PROFILE_PRODUCT" ] \
+    && [ "$(plist_value "$MOUNTED_SYSTEM_INFO" ProductBuildVersion)" = "$PROFILE_BUILD" ] \
+    || fail "可写系统卷与当前启动系统版本不同，未执行还原"
 TARGET="$MNT/System/Library/CoreServices/Dock.app"
 STAGED="$TARGET.restore-$$"
 PREVIOUS="$TARGET.previous-$$"

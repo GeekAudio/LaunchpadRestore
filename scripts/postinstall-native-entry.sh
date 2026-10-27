@@ -3,14 +3,12 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-NEW_DOCK="$SCRIPT_DIR/Dock.app"
-ORIGINAL="/Library/Application Support/LaunchpadRestore/Dock.app.orig"
 BACKUP_DIR="/Library/Application Support/LaunchpadRestore"
-BACKUP_MANIFEST="$ORIGINAL.manifest.plist"
+LEGACY_ORIGINAL="$BACKUP_DIR/Dock.app.orig"
+LEGACY_BACKUP_MANIFEST="$LEGACY_ORIGINAL.manifest.plist"
 PACKAGE_MANIFEST="$SCRIPT_DIR/package-manifest.plist"
-BUNDLE_INVENTORY="$SCRIPT_DIR/bundle-inventory.plist"
+PROFILE_SCRIPT="$SCRIPT_DIR/native-package-profile.sh"
 CURRENT="/System/Library/CoreServices/Dock.app"
-EXPECTED_SHA="278ed95b86bdef7e122820a0251c5a607fec377c217fae34a651397e8082e193"
 FIRST_EXPERIMENT_SHA="210926c10070447338e6dfa768992e9d97f607ef62764ef2093031a90d71cff6"
 SECOND_EXPERIMENT_SHA="961788046953c7fe0ae13b66efafeb6596aa63c1e88aab5923af02cd6590767f"
 FOURTH_EXPERIMENT_SHA="40fa542b81369a905d6fbb07bcd72be4052cf043215833a7ca48e90d6a9d82b1"
@@ -76,26 +74,26 @@ trap 'exit 1' HUP INT TERM
 [ "${3:-/}" = / ] || fail "只支持安装到当前启动系统"
 mkdir "$LOCK" 2>/dev/null || fail "另一个安装或还原任务正在运行"
 HAVE_LOCK=1
-[ -f "$PACKAGE_MANIFEST" ] || fail "安装包清单缺失，请重新获取完整安装包"
-[ "$(plist "$PACKAGE_MANIFEST" FormatVersion)" = 1 ] || fail "安装包清单版本不支持"
-[ "$(sw_vers -productVersion)" = "$(plist "$PACKAGE_MANIFEST" SupportedProductVersion)" ] \
-    || fail "系统版本不在此完整包支持范围内"
-[ "$(sw_vers -buildVersion)" = "$(plist "$PACKAGE_MANIFEST" SupportedBuildVersion)" ] \
-    || fail "系统 build 不在此完整包支持范围内"
-[ "$(uname -m)" = "$(plist "$PACKAGE_MANIFEST" SupportedArchitecture)" ] \
-    || fail "机器架构不在此完整包支持范围内"
+[ -f "$PROFILE_SCRIPT" ] && [ ! -L "$PROFILE_SCRIPT" ] || fail "包内版本选择脚本缺失"
+. "$PROFILE_SCRIPT"
+lpr_select_package_profile "$PACKAGE_MANIFEST" || fail "安装包不支持当前系统或清单不完整"
+NEW_DOCK="$SCRIPT_DIR/$PROFILE_VARIANT_DIR/Dock.app"
+BUNDLE_INVENTORY="$SCRIPT_DIR/$PROFILE_VARIANT_DIR/bundle-inventory.plist"
+BUILD_BACKUP_DIR="$BACKUP_DIR/Originals/$PROFILE_BUILD"
+ORIGINAL="$BUILD_BACKUP_DIR/Dock.app.orig"
+BACKUP_MANIFEST="$ORIGINAL.manifest.plist"
+echo "选择系统版本: $PROFILE_PRODUCT ($PROFILE_BUILD), $PROFILE_ARCH"
+echo "本版本原始备份目录: $BUILD_BACKUP_DIR"
 csrutil authenticated-root status 2>/dev/null | grep -q 'disabled' \
     || fail "Authenticated Root 仍启用，当前系统不允许替换 Dock；完整包不会更改系统安全配置"
 
-[ "$(sw_vers -productVersion)" = "26.7.1" ] || fail "系统版本不是 26.7.1"
-[ "$(uname -m)" = "x86_64" ] || fail "机器架构不是 x86_64"
 [ -d "$NEW_DOCK" ] || fail "安装包内完整 Dock.app 缺失"
 [ "$(defaults read "$CURRENT/Contents/Info.plist" CFBundleVersion 2>/dev/null)" = "2427.6" ] \
     || fail "当前 Dock 版本不是 2427.6"
 CURRENT_SHA="$(shasum -a 256 "$CURRENT/Contents/MacOS/Dock" | awk '{print $1}')"
+CURRENT_INFO_SHA="$(shasum -a 256 "$CURRENT/Contents/Info.plist" | awk '{print $1}')"
 NEW_SHA="$(shasum -a 256 "$NEW_DOCK/Contents/MacOS/Dock" | awk '{print $1}')"
-[ "$NEW_SHA" = "$(plist "$PACKAGE_MANIFEST" CandidateSHA256)" ] || fail "包内 Dock 哈希与清单不符"
-[ "$(plist "$PACKAGE_MANIFEST" StockSourceSHA256)" = "$EXPECTED_SHA" ] || fail "包内源版本标识不符"
+[ "$NEW_SHA" = "$PROFILE_CANDIDATE_SHA" ] || fail "包内 Dock 哈希与本系统变体清单不符"
 codesign --verify --strict "$NEW_DOCK" || fail "候选 Dock 签名验证失败"
 codesign --verify --strict "$RASTER_HELPER" || fail "位图后端配置工具缺失或签名不完整"
 codesign --verify --strict "$BUNDLE_HELPER" || fail "完整备份工具缺失或签名不完整"
@@ -104,10 +102,15 @@ codesign --verify --strict "$BUNDLE_HELPER" || fail "完整备份工具缺失或
     || fail "包内完整 Dock 文件或资源与清单不符"
 
 KNOWN_MODIFIED=0
-case "$CURRENT_SHA" in
-    "$FIRST_EXPERIMENT_SHA"|"$SECOND_EXPERIMENT_SHA"|"$FOURTH_EXPERIMENT_SHA"|"$FIFTH_EXPERIMENT_SHA"|"$SIXTH_EXPERIMENT_SHA"|"$SEVENTH_EXPERIMENT_SHA"|"$EIGHTH_EXPERIMENT_SHA"|"$NINTH_EXPERIMENT_SHA"|"$NEW_SHA") KNOWN_MODIFIED=1 ;;
-esac
+[ "$CURRENT_SHA" != "$PROFILE_CANDIDATE_SHA" ] || KNOWN_MODIFIED=1
+if [ "$PROFILE_BUILD" = 25G241 ]; then
+    case "$CURRENT_SHA" in
+        "$FIRST_EXPERIMENT_SHA"|"$SECOND_EXPERIMENT_SHA"|"$FOURTH_EXPERIMENT_SHA"|"$FIFTH_EXPERIMENT_SHA"|"$SIXTH_EXPERIMENT_SHA"|"$SEVENTH_EXPERIMENT_SHA"|"$EIGHTH_EXPERIMENT_SHA"|"$NINTH_EXPERIMENT_SHA") KNOWN_MODIFIED=1 ;;
+    esac
+fi
 if [ "$KNOWN_MODIFIED" = 0 ]; then
+    [ "$CURRENT_SHA" = "$PROFILE_STOCK_SHA" ] && [ "$CURRENT_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] \
+        || fail "当前 Dock 既不是本系统已知原版，也不是对应项目版本"
     codesign --verify --deep --no-strict -R='anchor apple' "$CURRENT" \
         || fail "目标 Dock 不是可验证的原版或已知项目版本"
 fi
@@ -121,21 +124,22 @@ USER_HOME="$(dscl . -read "/Users/$CU" NFSHomeDirectory | sed 's/^NFSHomeDirecto
 
 # Package contents supply Launchpad. A fresh target only needs its normal system
 # Dock: preserve that exact bundle here, without expecting a preinstalled port.
-[ ! -L "$BACKUP_DIR" ] && [ ! -L "$ORIGINAL" ] && [ ! -L "$BACKUP_MANIFEST" ] \
+[ ! -L "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR/Originals" ] && [ ! -L "$BUILD_BACKUP_DIR" ] \
+    && [ ! -L "$ORIGINAL" ] && [ ! -L "$BACKUP_MANIFEST" ] \
     || fail "备份路径不能是符号链接"
-mkdir -p "$BACKUP_DIR" || fail "无法创建备份目录"
+mkdir -p "$BUILD_BACKUP_DIR" || fail "无法创建本系统版本的备份目录"
 if [ -d "$ORIGINAL" ]; then
     if [ -f "$BACKUP_MANIFEST" ]; then
         "$BUNDLE_HELPER" --verify "$ORIGINAL" "$BACKUP_MANIFEST" \
             || fail "本机原始备份清单、系统版本或完整文件校验失败"
     else
-        # Migrate only the known original from older project installers. Unknown
-        # unlabelled backups are never treated as a fresh machine's original.
+        # An interrupted previous capture may leave the exact known stock bundle.
+        # Unknown or cross-build files are never promoted into a valid backup.
         ORIGINAL_SHA="$(shasum -a 256 "$ORIGINAL/Contents/MacOS/Dock" | awk '{print $1}')"
         ORIGINAL_INFO_SHA="$(shasum -a 256 "$ORIGINAL/Contents/Info.plist" | awk '{print $1}')"
-        [ "$ORIGINAL_SHA" = "$EXPECTED_SHA" ] \
-            && [ "$ORIGINAL_INFO_SHA" = df5a816eb4136b81c281ecbc4fe910cf82fbc572268219ae950c569a3ac5c2ab ] \
-            || fail "已有无清单备份不是已知原版，保留备份并中止"
+        [ "$ORIGINAL_SHA" = "$PROFILE_STOCK_SHA" ] \
+            && [ "$ORIGINAL_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] \
+            || fail "已有无清单备份不是当前系统已知原版，保留备份并中止"
         codesign --verify --deep --no-strict -R='anchor apple' "$ORIGINAL" \
             || fail "旧版原始备份签名校验失败"
         "$BUNDLE_HELPER" --create "$ORIGINAL" "$BACKUP_MANIFEST" \
@@ -144,14 +148,41 @@ if [ -d "$ORIGINAL" ]; then
     echo "已验证并保留目标电脑原始备份: $ORIGINAL"
 else
     [ ! -e "$ORIGINAL" ] && [ ! -e "$BACKUP_MANIFEST" ] || fail "已有不完整备份，请先检查备份目录"
-    [ "$KNOWN_MODIFIED" = 0 ] || fail "当前为项目修改版但原始备份丢失，无法创建可靠还原点"
-    BACKUP_STAGE="$BACKUP_DIR/Dock.app.orig.pending-$$"
+    BACKUP_SOURCE=""
+    if [ -d "$LEGACY_ORIGINAL" ] && [ ! -L "$LEGACY_ORIGINAL" ]; then
+        if [ -f "$LEGACY_BACKUP_MANIFEST" ] && [ ! -L "$LEGACY_BACKUP_MANIFEST" ]; then
+            if [ "$(plist "$LEGACY_BACKUP_MANIFEST" OSProductVersion)" = "$PROFILE_PRODUCT" ] \
+                && [ "$(plist "$LEGACY_BACKUP_MANIFEST" OSBuildVersion)" = "$PROFILE_BUILD" ]; then
+                "$BUNDLE_HELPER" --verify "$LEGACY_ORIGINAL" "$LEGACY_BACKUP_MANIFEST" \
+                    || fail "同版本旧目录备份校验失败，保留原文件并中止"
+                BACKUP_SOURCE="$LEGACY_ORIGINAL"
+            else
+                echo "旧目录保存的是其他系统版本备份，保留但不用于 $PROFILE_BUILD"
+            fi
+        elif [ ! -e "$LEGACY_BACKUP_MANIFEST" ] && [ ! -L "$LEGACY_BACKUP_MANIFEST" ]; then
+            LEGACY_SHA="$(shasum -a 256 "$LEGACY_ORIGINAL/Contents/MacOS/Dock" 2>/dev/null | awk '{print $1}')"
+            LEGACY_INFO_SHA="$(shasum -a 256 "$LEGACY_ORIGINAL/Contents/Info.plist" 2>/dev/null | awk '{print $1}')"
+            if [ "$LEGACY_SHA" = "$PROFILE_STOCK_SHA" ] && [ "$LEGACY_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ]; then
+                codesign --verify --deep --no-strict -R='anchor apple' "$LEGACY_ORIGINAL" \
+                    || fail "同版本旧原始备份签名校验失败"
+                BACKUP_SOURCE="$LEGACY_ORIGINAL"
+            fi
+        fi
+    fi
+    if [ -z "$BACKUP_SOURCE" ]; then
+        [ "$KNOWN_MODIFIED" = 0 ] || fail "当前为项目修改版但本系统原始备份丢失，无法创建可靠还原点"
+        BACKUP_SOURCE="$CURRENT"
+    fi
+    BACKUP_STAGE="$BUILD_BACKUP_DIR/Dock.app.orig.pending-$$"
     BACKUP_RECORD_STAGE="$BACKUP_STAGE.manifest.plist"
-    if ! ditto "$CURRENT" "$BACKUP_STAGE"; then
+    [ ! -e "$BACKUP_STAGE" ] && [ ! -L "$BACKUP_STAGE" ] \
+        && [ ! -e "$BACKUP_RECORD_STAGE" ] && [ ! -L "$BACKUP_RECORD_STAGE" ] \
+        || fail "备份暂存路径已存在，拒绝覆盖"
+    if ! ditto "$BACKUP_SOURCE" "$BACKUP_STAGE"; then
         fail "首次安装备份失败，系统 Dock 尚未替换"
     fi
     if ! "$BUNDLE_HELPER" --create "$BACKUP_STAGE" "$BACKUP_RECORD_STAGE" \
-        || ! "$BUNDLE_HELPER" --verify "$CURRENT" "$BACKUP_RECORD_STAGE"; then
+        || ! "$BUNDLE_HELPER" --verify "$BACKUP_SOURCE" "$BACKUP_RECORD_STAGE"; then
         fail "首次安装完整备份校验失败，暂存文件保留: $BACKUP_STAGE"
     fi
     mv "$BACKUP_STAGE" "$ORIGINAL" || fail "无法提交本机 Dock 备份"
@@ -159,7 +190,7 @@ else
         mv "$ORIGINAL" "$BACKUP_STAGE" 2>/dev/null || true
         fail "无法提交本机备份清单，暂存备份保留: $BACKUP_STAGE"
     fi
-    echo "首次安装已完整备份目标电脑 Dock: $ORIGINAL"
+    echo "已为 $PROFILE_PRODUCT ($PROFILE_BUILD) 完整备份目标电脑原始 Dock: $ORIGINAL"
 fi
 RASTER_STATE="$USER_HOME/Library/Application Support/LaunchpadRestore/RenderBackend/original.plist"
 RASTER_ATTEMPT_STATE="$RASTER_STATE"
@@ -188,10 +219,15 @@ else
 fi
 [[ "$ROOTDEV" =~ ^disk[0-9]+s[0-9]+$ ]] || fail "无法识别当前启动系统的 APFS 卷"
 echo "根卷: /dev/$ROOTDEV"
+echo "安装前启动快照: $(diskutil info -plist / | plutil -extract APFSSnapshotUUID raw - 2>/dev/null || true)"
 mkdir "$MNT" || fail "无法创建专用系统卷挂载目录"
 mount -o nobrowse -t apfs "/dev/$ROOTDEV" "$MNT" || fail "挂载系统卷失败"
 MOUNTED=1
 
+MOUNTED_SYSTEM_INFO="$MNT/System/Library/CoreServices/SystemVersion.plist"
+[ "$(plist "$MOUNTED_SYSTEM_INFO" ProductVersion)" = "$PROFILE_PRODUCT" ] \
+    && [ "$(plist "$MOUNTED_SYSTEM_INFO" ProductBuildVersion)" = "$PROFILE_BUILD" ] \
+    || fail "可写系统卷与当前启动系统版本不同，未替换 Dock"
 TARGET="$MNT/System/Library/CoreServices/Dock.app"
 STAGED="$TARGET.native-stage-$$"
 PREVIOUS="$TARGET.native-previous-$$"
@@ -221,6 +257,7 @@ SNAPSHOT_CREATED=1
 SWAP_ACTIVE=0
 RASTER_TOUCHED=0
 echo "快照已重建，候选版本: $(defaults read "$TARGET/Contents/Info.plist" LPRNativeExperimentVersion 2>/dev/null)"
+bless --info "$MNT" || echo "无法输出新快照信息，请结合当前 build 与 Dock 哈希检查"
 echo "Dock SHA-256: $(shasum -a 256 "$TARGET/Contents/MacOS/Dock" | awk '{print $1}')"
 echo "位图后端设置用户: $CU; 原始设置备份: $RASTER_STATE"
 if [ "$RASTER_ATTEMPT_STATE" != "$RASTER_STATE" ]; then

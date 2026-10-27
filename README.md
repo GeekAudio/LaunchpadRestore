@@ -2,38 +2,58 @@
 
 在 macOS 26 上提供可分页、可整理文件夹的启动台。
 
-> **当前正式版 v1.4：完整原生启动台 2427.6.10**。仅支持 macOS 26.7.1（25G241）、Intel / x86_64，
-> 携带完整 Dock 及资源，不要求目标预装旧启动台或 OCLP。第九版的分辨率修复已获本机成功反馈。
-> 独立 `Lunchpad.app` 作为另一种实现保留；它与 Apple 原生启动台的交互不同。
+> **正式版 v1.5（2427.6.11）：** 包含 Intel / `x86_64` 的 macOS 26.7.1（25G241）和 26.7.2（25G332）两套完整 Dock，安装时自动选择对应版本。26.7.2 已在本机安装并重启加载补丁，启动台打开和分辨率切换等功能仍待实测确认。
 
-**[完整原生包 v1.4](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.4)** · [原理说明](docs/原理.md) · [旧版构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
+独立 `Lunchpad.app` 作为另一种实现保留；它与 Apple 原生启动台的交互不同。
 
-> 安装包放在 [v1.4 发布](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.4) 附件中，不进 git 历史。
+**[完整原生包 v1.5](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.5)** · [完整包构建说明](docs/完整安装包构建.md) · [原理说明](docs/原理.md) · [旧版构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
 
-## 完整原生安装包（2427.6.10）
+## 完整原生安装包 v1.5（2427.6.11）
 
-下载 [完整分发 ZIP](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.4/LaunchpadRestore-Native2427-Full-2427.6.10.zip)，内含安装、卸载和中文说明。
+下载 [完整分发 ZIP](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Full-2427.6.11.zip)，内含安装、卸载和中文说明。安装或还原完成后重启生效。
 
-- 单独下载：[安装包 Install](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.4/LaunchpadRestore-Native2427-Install-2427.6.10.pkg)
-- 单独下载：[卸载还原包 Uninstall](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.4/LaunchpadRestore-Native2427-Uninstall-2427.6.10.pkg)
+- 单独下载：[安装包 Install](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Install-2427.6.11.pkg)
+- 单独下载：[卸载还原包 Uninstall](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Uninstall-2427.6.11.pkg)
 
 **已知限制**：尚未在另一台未安装 OCLP 的电脑上实际验证首次安装；重启后首次打开时
 偶见两个空白图标、反复开关后恢复的问题也尚未修复。
 
-完整包包含 468 个 Dock 文件、图像资源、插件和 XPC 辅助程序，以及渲染设置和备份校验工具。
+完整包自带两个系统版本各自的完整 Dock，每套包含 468 个文件、图像资源、插件和 XPC 辅助程序，以及渲染设置和备份校验工具。
 首次安装会备份**目标电脑自己的 Dock**；目标不需要先存在 `Dock.app.orig`。
 卸载只使用这台电脑保存的原始备份。截图中“还原本机原版 Dock”属于卸载用途，安装启动台请选择 Install。
 
-软件包 2427.6.10 改进分发和首次安装流程，Dock 主程序与当前成功运行的第九版逐字节相同。
+软件包 2427.6.11 沿用第九版启动台补丁和分辨率闪退修复。26.7.1 的 Dock 与 v1.4 包逐文件相同；26.7.2 使用对应系统的 Dock 单独构建。
 系统需已关闭 Authenticated Root，并具有运行重新签名系统程序的代码签名策略；
 本包不会调整 SIP、AMFI、EFI 或驱动。普通 Mac 默认安全配置下不能直接替换系统 Dock。
 支持范围仍限于上述系统 build 和架构，尚未在另一台未安装 OCLP 的电脑上实际安装验证。
 
 构建与包内清单见 [完整安装包构建](docs/完整安装包构建.md)。
 
+## 双版本兼容与备份
+
+v1.5 把已发布 v1.4 的 26.7.1 Dock 原样带入，并新增针对 macOS 26.7.2（25G332）的完整 Dock。
+安装器按系统版本和 build 选择对应文件。候选 Dock、辅助工具签名和文件库存检查已完成；
+26.7.2 已在本机安装并重启加载补丁，功能仍待实测；图标短暂空白的问题也仍待处理。详情见
+[v1.5 更新说明](docs/releases/v1.5.md) 和[完整包构建记录](docs/完整安装包构建.md)。
+
+每个系统 build 的原版 Dock 分开保存在：
+
+```text
+/Library/Application Support/LaunchpadRestore/Originals/25G241/Dock.app.orig
+/Library/Application Support/LaunchpadRestore/Originals/25G241/Dock.app.orig.manifest.plist
+/Library/Application Support/LaunchpadRestore/Originals/25G332/Dock.app.orig
+/Library/Application Support/LaunchpadRestore/Originals/25G332/Dock.app.orig.manifest.plist
+```
+
+升级时旧备份会保留；只使用当前 build 对应的备份回滚，不会拿另一个 build 的 Dock 代替。
+旧的全局备份只有能证明属于当前系统 build 时才会迁移或使用。
+
+**OCLP 提醒：** 这次已确认，OCLP 还原 root patch（`--last-sealed-snapshot`）会回退系统快照，把 Dock 恢复为 Apple 原版，
+本项目的启动台也会随之消失。OCLP 操作完成后，如需继续使用本项目启动台，请安装与当前系统 build 对应的包。
+
 ## 独立启动台
 
-本目录保留独立方案源码供参考；v1.4 发布附件只包含完整原生包。
+本目录保留独立方案源码供参考；v1.5 发布附件只包含完整原生包。
 
 独立 App 基于 MIT 许可的 [Lunchpad](https://github.com/arichyx/lunchpad)，
 提供分页、文件夹、拖拽排序、搜索、触控板手势和可配置快捷键。
@@ -69,7 +89,10 @@
 
 ---
 
-## 原生入口实验版（仅本机 macOS 26.7.1 x86_64）
+## 原生入口与补丁记录（Dock 补丁 2427.6.9）
+
+以下记录的是第九版 Dock 改动。v1.5 的 2427.6.11 包保留这套补丁，并为 26.7.2 提供单独构建；
+26.7.2 已在本机安装并重启加载，功能仍待实测。历史 v1.4 的 2427.6.10 包只包含 26.7.1 版本。
 
 静态检查显示 Dock 2427.6 仍包含旧启动台的 `Springboard` 等界面类，
 但显示入口固定转向新版“应用”，启动时也不再创建旧界面的
@@ -91,8 +114,8 @@
 位图生成可能增加 CPU 工作量。另收到启动初期两个图标短暂空白、反复开关后恢复的反馈，正在单独调查。
 
 第九版历史本机构建产物为 `pkg/LaunchpadRestore-Native2427-2427.6.9.pkg` 和
-`pkg/LaunchpadRestore-Native2427-Rollback.pkg`，未随 v1.4 发布。新安装请使用上方 2427.6.10 完整包。
-上述历史包都要求重启；回滚包从
+`pkg/LaunchpadRestore-Native2427-Rollback.pkg`，未随 v1.4 发布。当前安装请使用上方 v1.5 的 2427.6.11 包；
+旧回滚包从
 `/Library/Application Support/LaunchpadRestore/Dock.app.orig` 恢复本机原版。
 安装器还会备份当前桌面用户的原始渲染设置，回滚时按原始存在性和值恢复；原设置备份为
 `~/Library/Application Support/LaunchpadRestore/RenderBackend/original.plist`。
@@ -103,7 +126,7 @@
 ## 旧版原生 Dock 移植方案
 
 以下为 [v1.3 历史版本](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.3) 的 Dock 2419 方案，
-不适用于本次 2427.6.10 完整包。Dock 2419 在本机 macOS 26.7.1 上已确认存在分辨率切换崩溃。
+不适用于 2427.6.10 / 2427.6.11 完整包。Dock 2419 在本机 macOS 26.7.1 上已确认存在分辨率切换崩溃。
 
 > **旧方案原理**：macOS 26.0 的 `Dock.app`（版本 `2419`）默认显示老启动台。
 > 26.7.1 的 Dock 仍包含相关界面类，但显示入口固定转到新版“应用”界面。
@@ -202,16 +225,11 @@
 
 ---
 
-## 旧方案：系统更新后
+## 系统更新后
 
-每次 macOS 更新都会把 `Dock.app` 换回新版，启动台会消失。
-**更新完重新双击安装包即可。**
-
-如果系统跨了大版本（比如 26.x → 27.x），建议先删掉旧备份让安装包重新备份：
-
-```bash
-sudo rm -rf "/Library/Application Support/LaunchpadRestore/Dock.app.orig"
-```
+系统更新可能把 `Dock.app` 换回 Apple 原版，启动台会消失。先确认新系统 build 已有对应版本的安装包，
+再安装并重启。新包会把各 build 的原版 Dock 分开保存；旧备份应保留，不能先删除。
+卸载时只会使用当前系统 build 的备份。若仓库包尚未适配新系统，先不要用旧 build 的备份或安装包替换系统 Dock。
 
 ---
 
