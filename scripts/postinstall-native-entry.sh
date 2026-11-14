@@ -83,13 +83,18 @@ BUILD_BACKUP_DIR="$BACKUP_DIR/Originals/$PROFILE_BUILD"
 ORIGINAL="$BUILD_BACKUP_DIR/Dock.app.orig"
 BACKUP_MANIFEST="$ORIGINAL.manifest.plist"
 echo "选择系统版本: $PROFILE_PRODUCT ($PROFILE_BUILD), $PROFILE_ARCH"
+if [ "$PROFILE_EXACT" = 1 ]; then
+    echo "包内变体: $PROFILE_VARIANT_BUILD（与本机 build 一致）"
+else
+    echo "包内变体: $PROFILE_VARIANT_BUILD（本机 build 未单独收录，按 macOS 26 回退规则使用）"
+fi
 echo "本版本原始备份目录: $BUILD_BACKUP_DIR"
 csrutil authenticated-root status 2>/dev/null | grep -q 'disabled' \
     || fail "Authenticated Root 仍启用，当前系统不允许替换 Dock；完整包不会更改系统安全配置"
 
 [ -d "$NEW_DOCK" ] || fail "安装包内完整 Dock.app 缺失"
 [ "$(defaults read "$CURRENT/Contents/Info.plist" CFBundleVersion 2>/dev/null)" = "2427.6" ] \
-    || fail "当前 Dock 版本不是 2427.6"
+    || fail "当前系统 Dock 不是 2427.6；本包的候选 Dock 只与该版本配套，系统升级后需重新构建候选"
 CURRENT_SHA="$(shasum -a 256 "$CURRENT/Contents/MacOS/Dock" | awk '{print $1}')"
 CURRENT_INFO_SHA="$(shasum -a 256 "$CURRENT/Contents/Info.plist" | awk '{print $1}')"
 NEW_SHA="$(shasum -a 256 "$NEW_DOCK/Contents/MacOS/Dock" | awk '{print $1}')"
@@ -109,10 +114,14 @@ if [ "$PROFILE_BUILD" = 25G241 ]; then
     esac
 fi
 if [ "$KNOWN_MODIFIED" = 0 ]; then
-    [ "$CURRENT_SHA" = "$PROFILE_STOCK_SHA" ] && [ "$CURRENT_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] \
-        || fail "当前 Dock 既不是本系统已知原版，也不是对应项目版本"
+    if [ "$PROFILE_EXACT" = 1 ]; then
+        [ "$CURRENT_SHA" = "$PROFILE_STOCK_SHA" ] && [ "$CURRENT_INFO_SHA" = "$PROFILE_STOCK_INFO_SHA" ] \
+            || fail "当前 Dock 既不是本系统已知原版，也不是对应项目版本"
+    else
+        echo "本 build 未收录原版哈希，改用 Apple 签名校验确认当前 Dock 是原版"
+    fi
     codesign --verify --deep --no-strict -R='anchor apple' "$CURRENT" \
-        || fail "目标 Dock 不是可验证的原版或已知项目版本"
+        || fail "目标 Dock 不是可验证的 Apple 原版，也不是已知项目版本；无法创建可靠还原点"
 fi
 
 CU="$(stat -f%Su /dev/console 2>/dev/null)"

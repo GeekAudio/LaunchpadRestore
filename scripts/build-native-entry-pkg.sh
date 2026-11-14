@@ -8,7 +8,7 @@ SOURCE_261=""
 SOURCE_262="/System/Library/CoreServices/Dock.app"
 BASELINE_PACKAGE="$ROOT/pkg/LaunchpadRestore-Native2427-Install-2427.6.10.pkg"
 BASELINE_PACKAGE_EXPLICIT=0
-PACKAGE_VERSION="2427.6.11"
+PACKAGE_VERSION="2427.6.12"
 EXPERIMENT_VERSION="2427.6.9"
 ARCH="x86_64"
 
@@ -24,12 +24,20 @@ NEW_BUILD_VERSION="25G332"
 NEW_STOCK_SHA="0e13feca187548ea9a1e1c90c69a3a011133d919be7e0d6ad56da5cd46b2ecc2"
 NEW_STOCK_INFO_SHA="13ee6ebf392c4c8b86b8a70f8cbe782ac12426f35543ee89fdb6f3f1262fe06c"
 
+# 26.7.3 ships Dock 2427.6 with the exact same executable and Info.plist bytes
+# as 26.7.2, so it reuses the 25G332 variant directory and candidate.
+ALIAS_PRODUCT_VERSION="26.7.3"
+ALIAS_BUILD_VERSION="25G342"
+ALIAS_STOCK_SHA="$NEW_STOCK_SHA"
+ALIAS_STOCK_INFO_SHA="$NEW_STOCK_INFO_SHA"
+
 usage() {
     cat <<'USAGE'
 Usage: build-native-entry-pkg.sh [options]
 
 Build complete Install and Uninstall packages for Intel/x86_64 macOS 26.7.1
-(25G241) and 26.7.2 (25G332). This builder must run on macOS 26.7.2 (25G332).
+(25G241), 26.7.2 (25G332) and 26.7.3 (25G342). This builder must run on
+26.7.2 (25G332) or 26.7.3 (25G342).
 
   --source-26.7.1 PATH   Use an unmodified Apple Dock.app from 26.7.1 to
                          reproduce that build's v9 candidate.
@@ -76,10 +84,12 @@ BUILD="$(mktemp -d /private/tmp/launchpad-native-entry.XXXXXX)"
 trap 'rm -rf "$BUILD"' EXIT
 
 [ "$(uname -m)" = "$ARCH" ] || { echo "Only the x86_64 candidate is supported" >&2; exit 1; }
-[ "$(sw_vers -productVersion)" = "$NEW_PRODUCT_VERSION" ] \
-    || { echo "macOS $NEW_PRODUCT_VERSION is required for building" >&2; exit 1; }
-[ "$(sw_vers -buildVersion)" = "$NEW_BUILD_VERSION" ] \
-    || { echo "macOS build $NEW_BUILD_VERSION is required for building" >&2; exit 1; }
+# Any macOS 26 build may run the builder; validate_stock_bundle below still
+# requires Dock 2427.6 and the exact stock hashes of the recorded builds.
+case "$(sw_vers -productVersion)" in
+    26.*) ;;
+    *) echo "A macOS 26 host is required for building" >&2; exit 1 ;;
+esac
 [ -d "$SOURCE_262" ] || { echo "Missing 26.7.2 source Dock bundle: $SOURCE_262" >&2; exit 1; }
 
 sha256_file() { shasum -a 256 "$1" | awk '{print $1}'; }
@@ -230,15 +240,18 @@ PY
 # matching its exact product/build pair before changing the system volume.
 /usr/bin/python3 - "$BUILD/scripts/package-manifest.plist" \
     "$PACKAGE_VERSION" "$EXPERIMENT_VERSION" "$OLD_CANDIDATE_SHA_ACTUAL" \
-    "$NEW_CANDIDATE_SHA" <<'PY'
+    "$NEW_CANDIDATE_SHA" "$ALIAS_PRODUCT_VERSION" "$ALIAS_BUILD_VERSION" <<'PY'
 import plistlib
 import sys
 from pathlib import Path
 
-path, package, experiment, old_candidate, new_candidate = sys.argv[1:]
+(path, package, experiment, old_candidate, new_candidate,
+ alias_product, alias_build) = sys.argv[1:]
 manifest = {
     "FormatVersion": 2,
     "PackageVersion": package,
+    "MinimumProductVersion": "26.0",
+    "FallbackVariant": "25G332",
     "SupportedArchitecture": "x86_64",
     "DockVersion": "2427.6",
     "Variants": {
@@ -260,6 +273,15 @@ manifest = {
             "DockExperimentVersion": experiment,
             "RelativeDirectory": "variants/25G332",
         },
+        alias_build: {
+            "ProductVersion": alias_product,
+            "BuildVersion": alias_build,
+            "StockSourceSHA256": "0e13feca187548ea9a1e1c90c69a3a011133d919be7e0d6ad56da5cd46b2ecc2",
+            "CandidateSHA256": new_candidate,
+            "StockInfoPlistSHA256": "13ee6ebf392c4c8b86b8a70f8cbe782ac12426f35543ee89fdb6f3f1262fe06c",
+            "DockExperimentVersion": experiment,
+            "RelativeDirectory": "variants/25G332",
+        },
     },
 }
 Path(path).write_bytes(plistlib.dumps(manifest, sort_keys=False))
@@ -270,15 +292,16 @@ cp "$ROOT/scripts/native-package-profile.sh" "$BUILD/scripts/native-package-prof
 chmod 755 "$BUILD/scripts/postinstall" "$BUILD/scripts/native-package-profile.sh"
 
 cat > "$BUILD/payload/Library/Application Support/LaunchpadRestore/native-entry-readme.txt" <<'README'
-LaunchpadRestore 完整原生启动台 2427.6.11
+LaunchpadRestore 完整原生启动台 2427.6.12
 
-支持 Intel / x86_64 的 macOS 26.7.1（25G241）和 macOS 26.7.2（25G332）。
-安装包内含两套完整 Dock.app 和辅助工具，安装时按系统版本选择对应版本；
-不要求电脑预先安装旧版启动台或 OCLP。
+支持 Intel / x86_64 的 macOS 26.0 及以上，前提是系统 Dock 仍为 2427.6。
+26.7.1（25G241）、26.7.2（25G332）、26.7.3（25G342）有逐 build 的校验值；
+其他 26.x build 使用 25G332 的候选 Dock，并在安装前用 Apple 签名确认本机 Dock 是原版。
+安装包内含完整 Dock.app 和辅助工具；不要求电脑预先安装旧版启动台或 OCLP。
 
 首次安装会把本机 Dock 按系统 build 分别保存在：
-/Library/Application Support/LaunchpadRestore/Originals/25G241/
-/Library/Application Support/LaunchpadRestore/Originals/25G332/
+/Library/Application Support/LaunchpadRestore/Originals/<当前 build>/
+（例如 Originals/25G241/、Originals/25G332/、Originals/25G342/）
 升级前后的原版备份分开保留，不会用另一台电脑的 Dock 作为还原备份。
 卸载包使用本机相同系统 build 的备份。
 
@@ -293,20 +316,20 @@ mkdir -p "$BUILD/resources"
 cat > "$BUILD/resources/InstallReadme.html" <<'HTML'
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><body>
 <h2>安装完整原生启动台</h2>
-<p>支持 Intel / x86_64、macOS 26.7.1（25G241）和 macOS 26.7.2（25G332）。安装器会按系统 build 选择对应的完整 Dock。</p>
+<p>支持 Intel / x86_64、macOS 26.0 及以上（系统 Dock 须仍为 2427.6）。安装器优先选择与当前 build 对应的完整 Dock；未单独收录的 build 使用 25G332 的候选 Dock，并用 Apple 签名确认本机 Dock 为原版。</p>
 <p>本包包含完整 Dock.app 和辅助工具，不要求电脑预先安装旧版启动台或 OCLP。</p>
 <p>目标系统须关闭 Authenticated Root，并符合运行重新签名系统程序的要求。本包不会更改 SIP、安全设置、EFI 或驱动。</p>
-<p>首次安装会把本机 Dock 保存在 Originals/25G241/ 或 Originals/25G332/ 下；升级前后的原版备份分开保留，卸载时按当前系统 build 还原本机备份。</p>
+<p>首次安装会把本机 Dock 按当前 build 保存在 Originals/&lt;当前 build&gt;/ 下；升级前后的原版备份分开保留，卸载时按当前系统 build 还原本机备份。</p>
 <p>OCLP 恢复或重建系统快照可能把 Dock 恢复成 Apple 原版。OCLP 操作完成后，如需继续使用本项目启动台，请重新安装本包。</p>
 <p>安装前会检查系统版本和安全设置。本包不会更改 SIP、Authenticated Root、AMFI、EFI 或驱动设置。安装完成后重启生效。</p>
-<p>软件包版本为 2427.6.11；Dock 改动继续使用第九版（2427.6.9）。</p>
+<p>软件包版本为 2427.6.12；Dock 改动继续使用第九版（2427.6.9）。</p>
 </body></html>
 HTML
 cat > "$BUILD/resources/UninstallReadme.html" <<'HTML'
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><body>
 <h2>卸载并还原本机 Dock</h2>
-<p>支持 Intel / x86_64、macOS 26.7.1（25G241）和 macOS 26.7.2（25G332）。卸载器按当前系统 build 读取对应的本机原版备份。</p>
-<p>升级前后的 Dock 备份分别保存在 Originals/25G241/ 和 Originals/25G332/ 下。没有可验证的同 build 本机备份时，卸载器会停止，不会套用其他电脑的 Dock。</p>
+<p>支持 Intel / x86_64、macOS 26.0 及以上。卸载器按当前系统 build 读取对应的本机原版备份。</p>
+<p>升级前后的 Dock 备份分别保存在 Originals/&lt;build&gt;/ 下。没有可验证的同 build 本机备份时，卸载器会停止，不会套用其他电脑的 Dock。</p>
 <p>还原后重启以从新快照启动。</p>
 </body></html>
 HTML
@@ -372,11 +395,11 @@ DELIVERY="$BUILD/LaunchpadRestore-Native2427-$PACKAGE_VERSION"
 mkdir "$DELIVERY"
 cp "$INSTALL" "$UNINSTALL" "$DELIVERY/"
 cat > "$DELIVERY/使用说明.txt" <<'README'
-LaunchpadRestore 完整原生启动台 2427.6.11
+LaunchpadRestore 完整原生启动台 2427.6.12
 
-支持 Intel / x86_64 的 macOS 26.7.1（25G241）和 macOS 26.7.2（25G332）。安装包包含两套完整 Dock.app，自动按系统 build 选择。
+支持 Intel / x86_64 的 macOS 26.0 及以上（系统 Dock 须为 2427.6）。安装包包含完整 Dock.app，优先按系统 build 选择；未单独收录的 build 回退到 25G332 的候选 Dock，并按本机 build 单独备份。
 
-安装：打开文件名含 Install 的 pkg。首次安装会把本机 Dock 备份到 /Library/Application Support/LaunchpadRestore/Originals/25G241/ 或 25G332/。升级前后的原版备份分开保留，卸载时按当前系统 build 还原。
+安装：打开文件名含 Install 的 pkg。首次安装会把本机 Dock 备份到 /Library/Application Support/LaunchpadRestore/Originals/<当前 build>/。升级前后的原版备份分开保留，卸载时按当前系统 build 还原。
 
 卸载：打开文件名含 Uninstall 的 pkg。它只使用本机同系统 build 的原版备份；缺少有效备份时会停止，不会拿其他电脑的 Dock 还原。
 

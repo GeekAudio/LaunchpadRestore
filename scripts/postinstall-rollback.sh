@@ -78,6 +78,7 @@ PROFILE_STOCK_INFO_SHA=""
 PROFILE_CANDIDATE_SHA=""
 PROFILE_VARIANT_DIR=""
 PROFILE_EXPERIMENT=""
+PROFILE_EXACT=1
 package_value() { plist_value "$PACKAGE_MANIFEST" "$1"; }
 if [ -e "$PACKAGE_MANIFEST" ] || [ -L "$PACKAGE_MANIFEST" ]; then
     [ -f "$PACKAGE_MANIFEST" ] && [ ! -L "$PACKAGE_MANIFEST" ] \
@@ -94,8 +95,10 @@ if [ -e "$PACKAGE_MANIFEST" ] || [ -L "$PACKAGE_MANIFEST" ]; then
             [ "$OS_VERSION" = "$PROFILE_PRODUCT" ] && [ "$OS_BUILD" = "$PROFILE_BUILD" ] \
                 && [ "$ARCH" = "$PROFILE_ARCH" ] \
                 || fail "系统版本配置工具返回的目标与当前系统不匹配"
-            [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
-                || fail "卸载包未提供当前系统的原版 Dock 校验值"
+            if [ "$PROFILE_EXACT" = 1 ]; then
+                [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+                    || fail "卸载包未提供当前系统的原版 Dock 校验值"
+            fi
             ;;
         1)
             PROFILE_PRODUCT="$(package_value SupportedProductVersion)"
@@ -247,8 +250,10 @@ if [ -e "$BACKUP_MANIFEST" ] || [ -L "$BACKUP_MANIFEST" ]; then
         || fail "备份 Dock 主程序 SHA-256 与本机备份清单不匹配"
     [ "$(plist_value "$BACKUP_MANIFEST" DockInfoPlistSHA256)" = "$ORIG_INFO_SHA" ] \
         || fail "备份 Dock Info.plist SHA-256 与本机备份清单不匹配"
-    [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
-        || fail "缺少当前系统的原版 Dock 校验配置"
+    if [ "$PROFILE_EXACT" = 1 ]; then
+        [ -n "$PROFILE_STOCK_SHA" ] && [ -n "$PROFILE_STOCK_INFO_SHA" ] \
+            || fail "缺少当前系统的原版 Dock 校验配置"
+    fi
     [ -x "$BUNDLE_STATE_HELPER" ] && [ ! -L "$BUNDLE_STATE_HELPER" ] \
         || fail "缺少本机备份完整性校验工具，请先重新安装完整安装包"
     codesign --verify --strict "$BUNDLE_STATE_HELPER" || fail "本机备份完整性校验工具签名无效"

@@ -2,39 +2,49 @@
 
 在 macOS 26 上提供可分页、可整理文件夹的启动台。
 
-> **正式版 v1.5（2427.6.11）：** 包含 Intel / `x86_64` 的 macOS 26.7.1（25G241）和 26.7.2（25G332）两套完整 Dock，安装时自动选择对应版本。26.7.2 已在本机安装并重启加载补丁，启动台打开和分辨率切换等功能仍待实测确认。
+> **当前构建 2427.6.12（v1.5.1）：** 支持 Intel / `x86_64` 的 **macOS 26.0 及以上**，前提是系统 Dock 仍为 `2427.6`。
+> 26.7.1（25G241）、26.7.2（25G332）、26.7.3（25G342）有逐 build 的校验值；其他 26.x build 自动回退到 25G332 的候选 Dock，
+> 安装前用 Apple 签名确认本机 Dock 是原版，并按本机 build 单独备份，卸载时只还原本机备份。
+> 26.7.1 / 26.7.2 的 Dock 已实测；26.7.3 与 26.7.2 的 Dock 逐字节相同，安装链路已通过选包与签名校验，启动台表现仍待实测。
 
 独立 `Lunchpad.app` 作为另一种实现保留；它与 Apple 原生启动台的交互不同。
 
-**[完整原生包 v1.5](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.5)** · [完整包构建说明](docs/完整安装包构建.md) · [原理说明](docs/原理.md) · [旧版构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
+[完整包构建说明](docs/完整安装包构建.md) · [原理说明](docs/原理.md) · [旧版构建方法](scripts/build-pkg.sh) · [图标变空](#图标变空) · [布局恢复默认](#布局乱了--恢复默认顺序)
 
-## 完整原生安装包 v1.5（2427.6.11）
+**[完整原生包 v1.5.1](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.5.1)** · [更新说明](docs/releases/v1.5.1.md)
 
-下载 [完整分发 ZIP](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Full-2427.6.11.zip)，内含安装、卸载和中文说明。安装或还原完成后重启生效。
+## 完整原生安装包 v1.5.1（2427.6.12）
 
-- 单独下载：[安装包 Install](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Install-2427.6.11.pkg)
-- 单独下载：[卸载还原包 Uninstall](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5/LaunchpadRestore-Native2427-Uninstall-2427.6.11.pkg)
+下载 [完整分发 ZIP](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5.1/LaunchpadRestore-Native2427-Full-2427.6.12.zip)，内含安装、卸载和中文说明。安装或还原完成后重启生效。
+
+- 单独下载：[安装包 Install](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5.1/LaunchpadRestore-Native2427-Install-2427.6.12.pkg)
+- 单独下载：[卸载还原包 Uninstall](https://github.com/GeekAudio/LaunchpadRestore/releases/download/v1.5.1/LaunchpadRestore-Native2427-Uninstall-2427.6.12.pkg)
+
+已发布的 [v1.5 资产](https://github.com/GeekAudio/LaunchpadRestore/releases/tag/v1.5) 仍为 2427.6.11，只认 26.7.1 / 26.7.2，
+在 26.7.3 或更新 build 上会以「安装包不支持当前系统」中止，请改用 v1.5.1。
 
 **已知限制**：尚未在另一台未安装 OCLP 的电脑上实际验证首次安装；重启后首次打开时
 偶见两个空白图标、反复开关后恢复的问题也尚未修复。
 
-完整包自带两个系统版本各自的完整 Dock，每套包含 468 个文件、图像资源、插件和 XPC 辅助程序，以及渲染设置和备份校验工具。
+完整包自带完整 Dock（468 个文件，含图像资源、插件和 XPC 辅助程序），以及渲染设置和备份校验工具。
 首次安装会备份**目标电脑自己的 Dock**；目标不需要先存在 `Dock.app.orig`。
 卸载只使用这台电脑保存的原始备份。截图中“还原本机原版 Dock”属于卸载用途，安装启动台请选择 Install。
 
-软件包 2427.6.11 沿用第九版启动台补丁和分辨率闪退修复。26.7.1 的 Dock 与 v1.4 包逐文件相同；26.7.2 使用对应系统的 Dock 单独构建。
+软件包 2427.6.12 沿用第九版启动台补丁和分辨率闪退修复。26.7.1 的 Dock 与 v1.4 包逐文件相同；
+26.7.2 使用对应系统的 Dock 单独构建；26.7.3 的 Dock 与 26.7.2 逐字节相同，共用同一份候选。
 系统需已关闭 Authenticated Root，并具有运行重新签名系统程序的代码签名策略；
 本包不会调整 SIP、AMFI、EFI 或驱动。普通 Mac 默认安全配置下不能直接替换系统 Dock。
-支持范围仍限于上述系统 build 和架构，尚未在另一台未安装 OCLP 的电脑上实际安装验证。
+支持范围为 Intel / `x86_64`、macOS 26.0 及以上且系统 Dock 为 `2427.6`；尚未在另一台未安装 OCLP 的电脑上实际安装验证。
 
 构建与包内清单见 [完整安装包构建](docs/完整安装包构建.md)。
 
-## 双版本兼容与备份
+## 兼容范围与备份
 
-v1.5 把已发布 v1.4 的 26.7.1 Dock 原样带入，并新增针对 macOS 26.7.2（25G332）的完整 Dock。
-安装器按系统版本和 build 选择对应文件。候选 Dock、辅助工具签名和文件库存检查已完成；
-26.7.2 已在本机安装并重启加载补丁，功能仍待实测；图标短暂空白的问题也仍待处理。详情见
-[v1.5 更新说明](docs/releases/v1.5.md) 和[完整包构建记录](docs/完整安装包构建.md)。
+v1.5.1 不再按 build 白名单拒绝安装：清单给出 `MinimumProductVersion`（26.0）和 `FallbackVariant`（25G332），
+安装器先按 build 精确匹配，未收录的 build 走回退变体，并用 Apple 签名确认本机 Dock 是原版后才建立还原点。
+26.7.1 / 26.7.2 的 Dock 已实测；26.7.3 与 26.7.2 的 Dock 逐字节相同，安装链路已通过选包与签名校验，
+启动台表现仍待实测；图标短暂空白的问题也仍待处理。详情见
+[v1.5.1 更新说明](docs/releases/v1.5.1.md)、[v1.5 更新说明](docs/releases/v1.5.md) 和[完整包构建记录](docs/完整安装包构建.md)。
 
 每个系统 build 的原版 Dock 分开保存在：
 
